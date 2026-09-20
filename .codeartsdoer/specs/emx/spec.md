@@ -3,12 +3,15 @@
 > **项目：Enterprise Meeting X（EMX）**
 > **中文名称：企业实时会议与远程协作平台**
 > **文档编号：EMX-001**
-> **版本：v0.2 DRAFT**
+> **版本：v0.2**
 > **阶段：Requirements Specification**
-> **状态：DRAFT / 待 PM 评审（REVIEW REQUIRED）**
+> **状态：PASS / CLOSED / FROZEN**
 > **实现方：华为云团队**
 > **部署目标：企业私有化 Debian Server**
-> **当前裁决：不授权编码，待 Requirements Gate 通过后进入 EMX-002 Architecture Design**
+> **Requirements Gate：FINAL ACCEPTANCE（PASS / CLOSED）**
+> **RR-01~RR-04：全部 CLOSED**
+> **D-01~D-03：EMX-002 Design Input**
+> **当前裁决：需求已冻结，EMX-002 Architecture Design 已授权，禁止修改需求正文**
 > **文档定位：需求规格（What），不含技术设计与实现细节（How）**
 > **本版变更：依据 PM Requirements Review 裁决 RR-01~RR-04 修订，D-01~D-03 划入 EMX-002 Design 不修改**
 
@@ -1450,4 +1453,6 @@ Recording
 ---
 
 > **文档结束**
-> **本文档为 EMX-001 v0.2 DRAFT，依据 PM Requirements Review 裁决 RR-01~RR-04 修订，待华为云团队 Requirements Review 通过后升级为基线版本。**
+> **本文档为 EMX-001 v0.2，状态 PASS / CLOSED / FROZEN。**
+> **Requirements Gate = FINAL ACCEPTANCE；RR-01~RR-04 = CLOSED；D-01~D-03 = EMX-002 Design Input。**
+> **需求已冻结，禁止修改需求正文。**

@@ -3,15 +3,16 @@
 > **项目：Enterprise Meeting X（EMX）**
 > **中文名称：企业实时会议与远程协作平台**
 > **文档编号：EMX-002**
-> **版本：v0.3 DRAFT**
+> **版本：v0.4 DRAFT**
 > **阶段：Architecture Design**
-> **状态：DRAFT / 待 Architecture Review（7 项关键技术决策已深度完善）**
+> **状态：DRAFT / 待 Architecture Gate 二轮裁决（AR-02~AR-07 已闭合，AR-01 由 CodeArts 直接处理 spec.md 状态元数据）**
 > **实现方：华为云团队**
 > **部署目标：企业私有化 Debian Server**
 > **需求基线：EMX-001 v0.2 DRAFT（SHA256 = 62036788ec5b2fb5835a2f2fa9dadebcae949fb4b1768301f1b43cf25ec7960e）**
-> **当前裁决：不授权编码，待 Architecture Gate 通过后进入 EMX-003 Task Decomposition**
+> **当前裁决：不授权编码，待 Architecture Gate 二轮通过后进入 EMX-003 Task Decomposition**
 > **文档定位：架构设计（How），不含逐行代码实现**
-> **本版变更：v0.2 → v0.3，依据 PM Architecture Review 裁决深度完善 D-01~D-07 七项 Gate 项：D-01 补齐设备身份/重连/Agent 绑定 Target/身份分离/被盗失效机制；D-02 补齐版本号机制/操作回放；D-03 补齐 TURN 带宽/WebSocket 连接数/V1 容量瓶颈边界/目标 vs 验证区分；D-04 补齐故障三态矩阵；D-05 补齐多网络路径差异/Firewall 设计原则；D-06 补齐零安装 ≠ Remote Control 零安装架构区分；D-07 补齐七者权限矩阵/Screen Share 与 Remote Control 架构分离/14 类审计事件实现**
+> **本版变更：v0.3 → v0.4，依据 PM Architecture Review 一轮裁决 🟡 HOLD 闭合 AR-02~AR-07 六项 Gap：AR-02 Security-Critical Audit Fail-Closed 策略 + Transactional Outbox + Durable Queue + Audit Failure Policy 表格（§4.1）；AR-03 Yjs Canonical Version Model 裁决 + 10 项并发/重连/恢复/Undo 语义（§4.2）；AR-04 Capacity Target vs Verified Boundary 明确声明 + Task 阶段验证门（§4.3）；AR-05 三层部署等级 Tier 1/2/3（§4.4）；AR-06 Screen Share → Remote Control 前置关系 ADR-001（§4.5）；AR-07 Remote Agent 语言选型 Go + Windows Boundary 收敛（§4.6）**
+> **上版变更（v0.3）：依据 PM Architecture Review 裁决深度完善 D-01~D-07 七项 Gate 项：D-01 补齐设备身份/重连/Agent 绑定 Target/身份分离/被盗失效机制；D-02 补齐版本号机制/操作回放；D-03 补齐 TURN 带宽/WebSocket 连接数/V1 容量瓶颈边界/目标 vs 验证区分；D-04 补齐故障三态矩阵；D-05 补齐多网络路径差异/Firewall 设计原则；D-06 补齐零安装 ≠ Remote Control 零安装架构区分；D-07 补齐七者权限矩阵/Screen Share 与 Remote Control 架构分离/14 类审计事件实现**
 
 ---
 
@@ -4701,4 +4702,1081 @@ end
 ---
 
 > **第三章结束。EMX-002 架构设计文档 v0.3 DRAFT 已覆盖 12 项关键技术决策中的 7 项详细设计（D-01~D-07），依据 PM Architecture Review 裁决深度完善：D-01 补齐设备身份/重连/Agent 绑定 Target/身份分离/被盗失效机制（§3.1.8~§3.1.12）；D-02 补齐版本号机制/操作回放（§3.2.8~§3.2.9）；D-03 补齐 TURN 带宽/WebSocket 连接数/V1 容量瓶颈边界/目标 vs 验证区分（§3.3.10~§3.3.13）；D-04 补齐故障三态矩阵（§3.4.7）；D-05 补齐多网络路径差异/Firewall 设计原则（§3.5.9~§3.5.10）；D-06 补齐零安装 ≠ Remote Control 零安装架构区分/Remote Target 必经独立 Agent（§3.6.7~§3.6.8）；D-07 补齐七者权限矩阵/Screen Share 与 Remote Control 架构分离/Remote Control 默认 DENY 架构强制/30 分钟上限实现/企业策略可配置/会议结束不得继续控制/14 类审计事件实现（§3.7.10~§3.7.15）。其余 5 项（架构上下文图、总体架构、配置项、状态机、接口设计、数据模型）已在第一/二章完成。**
+
+---
+
+# 四、Architecture Review Gap Closure（AR-02 ~ AR-07）
+
+> 本章依据 PM Architecture Review 一轮裁决 🟡 HOLD，闭合 AR-02~AR-07 六项 Gap。每项修正可追溯至 EMX-001 spec.md 具体需求，且**仅做架构设计 Gap Closure，不拆 Coding Task、不进入 Implementation、不授权编码**。
+>
+> **Gap 清单**：
+> - AR-02 Security-Critical Audit Fail-Closed 策略（§4.1）
+> - AR-03 Yjs Canonical Version Model 收敛（§4.2）
+> - AR-04 Capacity Target / Verified Boundary 明确声明（§4.3）
+> - AR-05 Single Node / Enterprise / HA Deployment Boundary 三层分层（§4.4）
+> - AR-06 Screen Share → Remote Control 前置关系 ADR（§4.5）
+> - AR-07 Remote Agent 技术栈与 Windows Boundary 收敛（§4.6）
+
+## 4.1 AR-02 — Security-Critical Audit Fail-Closed 策略
+
+### 4.1.1 问题陈述与关联需求
+
+**问题**：v0.3 §3.7.15 与 §2.1.3.6 事务边界设计中，审计写入失败时采用"业务不阻塞 + 异步补写 + 运维告警"策略。该策略对普通业务事件可接受，但对**安全关键事件**存在完整性风险：
+
+- spec §7.5.2 规则 9 要求"远程控制会话全程审计"；
+- spec §6.3 规则 6 要求"审计日志 append-only，不可篡改、不可删除"；
+- spec §7.10.1 要求"Remote Control 必须完整审计"。
+
+**风险场景**：Remote Control Approved 事件审计写入失败但控制会话已建立 → 出现"高风险安全事件无可靠审计证据"的情况，违反 spec §6.3 规则 6 与 §7.5.2 规则 9。
+
+**必须修正**：区分 Audit Event 风险等级，安全关键事件采用 Fail-Closed 策略，普通事件保留异步补写。
+
+### 4.1.2 Audit Event 分级
+
+将 spec §7.10.1 的 14 类审计事件按风险等级分为两类：
+
+| 风险等级 | 事件类型 | 判定依据 | 关联 spec |
+|---------|---------|---------|----------|
+| **Security-Critical（安全关键）** | `Remote Control Requested` / `Remote Control Approved` / `Remote Control Rejected` / `Remote Control Terminated` | 远程控制是系统级操作，涉及被控方本机鼠标/键盘/系统级权限，安全风险最高；spec §7.5.2 规则 9 强制全程审计 | spec §7.5.2 规则 9、§7.10.1 |
+| **Security-Critical（安全关键）** | `Guest Approved`（候机室批准 + Guest Token 签发） | 涉及外部身份进入企业会议边界，权限授予关键决策 | spec §7.2.1 规则 4、§6.3 规则 8 |
+| **Security-Critical（安全关键）** | `Participant Removed`（主持人移除参会者） | 涉及会议控制权行使，可能引发争议，需可靠证据 | spec §7.7、§7.10.1 |
+| **Security-Critical（安全关键）** | 权限/策略变更事件（`remoteControl.maxDuration` 调整、`remoteControl.appLaunchWhitelist` 变更、Agent 证书吊销） | 涉及安全策略边界变更，影响后续所有控制会话安全 | spec §7.5.2 规则 11、§3.1.12 |
+| **Low-Risk（低风险）** | `Meeting Created` / `Guest Invited` / `Guest Joined`（候机室）/ `Screen Share Started` / `Screen Share Stopped` / `Recording Started` / `Recording Stopped` / `Meeting Ended` | UI/状态变更类事件，不涉及系统级操作，丢失可由业务日志/监控补全 | spec §7.10.1 |
+
+**分级原则**：
+1. 涉及**远程控制生命周期**（申请/授权/拒绝/终止）→ Security-Critical；
+2. 涉及**身份边界跨越**（Guest 进入会议、参会者被移除）→ Security-Critical；
+3. 涉及**安全策略变更**（maxDuration、白名单、证书吊销）→ Security-Critical；
+4. 其余 UI/状态/通知类事件 → Low-Risk。
+
+### 4.1.3 Security-Critical Audit Fail-Closed 策略
+
+**核心原则**：安全关键事件**不得在无可靠审计证据时产生对应业务效果**。
+
+| 事件 | Fail-Closed 行为 | 关联 spec |
+|------|----------------|----------|
+| `Remote Control Requested` | 必须可靠落盘/排队后才能向被控方转发授权对话框；落盘失败 → 拒绝请求 + 返回 `EMX-E-AUDIT-002` + 告警 | spec §7.5.2 规则 3/9 |
+| `Remote Control Approved` | **必须可靠落盘/排队后才能建立控制会话**；落盘失败 → **不得建立控制通道** + 拒绝授权 + 返回 `EMX-E-AUDIT-003` + 告警 | spec §7.5.2 规则 4/9、§6.3 规则 6 |
+| `Remote Control Rejected` | 必须可靠落盘/排队后才能向控制方返回拒绝结果；落盘失败 → 控制方收到"系统错误，请重试" + 告警 | spec §7.5.5 异常 2 |
+| `Remote Control Terminated` | 必须可靠落盘/排队后才能完成终止流程；落盘失败 → **通道仍立即断开**（安全优先），但终止事件进入 durable queue 重试，直至落盘成功 | spec §7.5.2 规则 5/9 |
+| `Guest Approved` | 必须可靠落盘/排队后才能签发 Guest Token；落盘失败 → 拒绝批准 + 返回 `EMX-E-AUDIT-004` + 告警 | spec §7.2.1 规则 4 |
+| `Participant Removed` | 必须可靠落盘/排队后才能执行移除；落盘失败 → 拒绝移除 + 返回 `EMX-E-AUDIT-005` + 告警 | spec §7.7 |
+| 权限/策略变更 | 必须可靠落盘/排队后才能生效；落盘失败 → 拒绝变更 + 返回 `EMX-E-AUDIT-006` + 告警 | spec §7.5.2 规则 11 |
+
+**关键裁决**：`Remote Control Approved` 的 Fail-Closed 是本策略的核心。**不得在没有可靠审计证据时建立控制会话**——即使被控方已显式授权、Agent 已在线、前提全部满足，若审计事件未可靠落盘/排队，控制通道**不得建立**。理由：远程控制是系统级高风险操作，若无审计证据，事后无法追溯"谁在何时授权了什么权限给谁控制了哪台机器"，违反 spec §6.3 规则 6 与 §7.5.2 规则 9。
+
+**`Remote Control Terminated` 的特殊处理**：终止事件落盘失败时，**控制通道仍立即断开**（安全优先，被控方立即恢复控制权），但终止审计事件进入 durable queue 重试直至落盘成功。理由：终止是安全降级操作，不能因审计问题延迟被控方恢复控制权；但终止事件本身必须最终落盘（durable queue 保证），否则"控制会话何时终止、由谁终止"无证据。
+
+### 4.1.4 Transactional Outbox 模式
+
+安全关键审计事件采用 **Transactional Outbox** 模式写入，保证业务状态与审计事件的原子性。
+
+```plantuml
+@startuml
+title Transactional Outbox 模式（Security-Critical Audit）
+
+skinparam rectangle {
+    BackgroundColor #F5F5F5
+    BorderColor #333333
+}
+
+rectangle "业务事务边界\n(单 PostgreSQL 事务)" as Tx {
+    rectangle "1. 写入业务状态\n(control_session / guest_token / ...)" as S1
+    rectangle "2. 写入 outbox 表\n(outbox_event, status=PENDING)" as S2
+}
+
+rectangle "Outbox Relay\n(独立 goroutine)" as Relay {
+    rectangle "3. 轮询 outbox\n(status=PENDING)" as R1
+    rectangle "4. 写入 audit_events\n(append-only + 哈希链)" as R2
+    rectangle "5. 标记 outbox status=DONE" as R3
+}
+
+rectangle "Durable Queue\n(基于 outbox 表)" as Queue
+rectangle "Audit Store\n(PostgreSQL audit_events)" as Audit
+
+S1 --> S2 : 同事务原子提交
+S2 --> Queue : 事务提交后可见
+Queue --> R1 : Relay 轮询
+R1 --> R2 : 写入审计
+R2 --> R3 : 成功后标记
+R3 --> Audit : 最终落盘
+
+note bottom of Tx
+  关键保证:
+  - 业务状态与 outbox 原子提交 (同事务)
+  - 若事务回滚, outbox 也不存在 (无孤儿审计)
+  - 若事务提交但 Relay 未处理, outbox 持久化 (重启后继续)
+  - 关联 spec §6.3 规则 6, §7.5.2 规则 9
+end note
+@enduml
+```
+
+**Outbox 表设计**（不包含完整 DDL，仅说明字段职责）：
+
+| 字段 | 说明 | 关联 spec |
+|------|------|----------|
+| `outbox_id` | UUID，唯一标识 | — |
+| `event_id` | UUID，与 audit_events.eventId 一致，用于去重 | spec §11.7 |
+| `event_type` | 事件类型（Security-Critical 子集） | spec §7.10.1 |
+| `payload` | 结构化事件内容（脱敏后） | spec §11.7 |
+| `status` | {PENDING, DONE, FAILED} | — |
+| `created_at` | 事件产生时间 | — |
+| `processed_at` | Relay 处理完成时间 | — |
+| `retry_count` | 重试次数 | — |
+| `prev_hash` | 哈希链前驱（写入时锁定） | spec §6.3 规则 6 |
+
+**Relay 工作流程**：
+1. 独立 goroutine 每 100ms 轮询 `outbox WHERE status=PENDING ORDER BY created_at LIMIT N`；
+2. 对每条记录，按 `created_at` 顺序获取哈希链前驱（保证因果顺序）；
+3. 写入 `audit_events`（append-only + 哈希链）；
+4. 写入成功 → 标记 `outbox.status=DONE`；
+5. 写入失败 → `retry_count++`，按指数退避重试；
+6. 重试超过阈值 → `status=FAILED` + 告警 + 人工介入。
+
+**与 v0.3 §2.1.3.6 事务边界的修正关系**：v0.3 §2.1.3.6"审计写入"事务采用"写入失败异步补写 + 运维告警"，本节将其细化为：
+- Security-Critical 事件 → Transactional Outbox + Fail-Closed（本节）；
+- Low-Risk 事件 → 保留 v0.3 异步补写策略（§3.7.15）。
+
+### 4.1.5 Durable Queue 与重启恢复
+
+**Durable Queue 实现**：基于 PostgreSQL `outbox` 表实现，不引入外部 MQ（Kafka/RabbitMQ），理由：
+1. 私有化部署不增加运维组件（spec §9 数据主权、§12.2 不做复杂依赖）；
+2. PostgreSQL 已是 EMX 必备组件，复用其 ACID 特性保证 outbox 持久化；
+3. 审计事件量级中等（单会议 ~500 事件，§3.3.7），无需 MQ 吞吐量。
+
+**重启恢复流程**：
+
+```plantuml
+@startuml
+title Audit Service 重启恢复流程
+
+start
+:Audit Service 启动;
+:查询 outbox WHERE status=PENDING;
+if (存在未完成记录?) then (是)
+    :按 created_at 顺序读取;
+    :重新计算哈希链前驱 (从 audit_events 最后一条);
+    :逐条写入 audit_events;
+    :写入成功 → 标记 DONE;
+    :写入失败 → 保留 PENDING, 继续重试;
+else (否)
+    :正常启动;
+endif
+:启动 Relay goroutine 继续轮询;
+stop
+
+note right
+  重启恢复保证:
+  - outbox 持久化在 PostgreSQL, 重启不丢失
+  - 哈希链从最后一条 audit_event 继续, 保证链连续
+  - 未完成事件按 created_at 顺序补写, 保证因果顺序
+  - 关联 spec §6.3 规则 6 (不可篡改/不可删除)
+end note
+@enduml
+```
+
+### 4.1.6 重复事件去重
+
+**去重机制**：每条 Audit Event 携带全局唯一 `event_id`（UUID v4），`audit_events` 表对 `event_id` 建立 UNIQUE 约束。
+
+| 去重场景 | 触发原因 | 处理方式 | 关联 spec |
+|---------|---------|---------|----------|
+| Relay 重试写入 | Outbox Relay 重试时重复写入 | `event_id` UNIQUE 约束 → 第二次写入失败 → 标记 DONE（幂等） | spec §11.7 |
+| 服务重启补写 | 重启后 Relay 重复处理已 DONE 记录 | 查询 `audit_events` 已存在 `event_id` → 跳过 + 标记 DONE | — |
+| 业务层重复调用 | 业务服务因超时重试 AppendEvent | 同 `event_id` → UNIQUE 约束拒绝 → 返回已存在 Ack | — |
+
+**event_id 生成责任**：由**业务服务**在产生事件时生成（非 Audit Service 生成），保证业务重试时携带相同 `event_id`，实现幂等。
+
+### 4.1.7 顺序保证（因果顺序）
+
+**顺序约束**：同一会议的审计事件必须保持**因果顺序**（非全局严格顺序），即：
+1. `Remote Control Requested` 必须在 `Remote Control Approved` 之前；
+2. `Remote Control Approved` 必须在 `Remote Control Terminated` 之前；
+3. `Guest Joined`（候机室）必须在 `Guest Approved` 之前。
+
+**实现机制**：
+- Outbox 表按 `created_at` 排序，Relay 按顺序处理，保证同一会议事件顺序；
+- 哈希链前驱 `prev_hash` 在写入时锁定为当前 `audit_events` 最后一条的 `curr_hash`，保证链连续性；
+- 跨会议事件无严格顺序要求，但哈希链仍全局连续。
+
+### 4.1.8 哈希链并发写入一致性
+
+**问题**：哈希链要求"前一条事件的哈希作为下一条的输入"，并发写入时若两条事件同时读取同一 `prev_hash`，会导致哈希链分叉。
+
+**解决方案**：采用**单写入者 + 串行化**策略：
+
+```plantuml
+@startuml
+title 哈希链并发写入一致性方案
+
+skinparam rectangle {
+    BackgroundColor #F5F5F5
+    BorderColor #333333
+}
+
+rectangle "Outbox Relay\n(单实例, 串行处理)" as Relay {
+    rectangle "获取 PG 行级锁\n(SELECT ... FOR UPDATE\nON audit_chain_lock)" as Lock
+    rectangle "读取 prev_hash\n(audit_events 最后一条 curr_hash)" as Read
+    rectangle "计算 curr_hash\n(SHA-256(prevHash ‖ eventId ‖ ...))" as Calc
+    rectangle "写入 audit_events\n(单行 INSERT)" as Write
+    rectangle "释放行级锁" as Unlock
+}
+
+Lock --> Read --> Calc --> Write --> Unlock
+
+note bottom
+  一致性保证:
+  - 单 Relay 实例串行处理, 无并发写入
+  - PG 行级锁防止多 Relay 实例竞争 (HA 场景)
+  - 哈希链严格连续, 无分叉
+  - 关联 spec §6.3 规则 6
+end note
+@enduml
+```
+
+**HA 场景处理**：若部署多 Relay 实例（§4.4 Tier 3），通过 PostgreSQL `SELECT ... FOR UPDATE` 行级锁串行化，同一时刻仅一个 Relay 写入 `audit_events`。`audit_chain_lock` 为单行锁表，保证全局哈希链顺序。
+
+### 4.1.9 Audit Store 不可用时 Remote Control 的 Fail-Closed 行为
+
+**明确声明**：当 Audit Store（PostgreSQL `audit_events` 表）不可用时，Remote Control 的行为如下：
+
+| Remote Control 阶段 | Audit Store 不可用时行为 | 理由 | 关联 spec |
+|--------------------|------------------------|------|----------|
+| **新申请（Requested）** | **拒绝**新申请 + 返回 `EMX-E-AUDIT-002` + 告警 | 无法记录申请事件，事后无法追溯 | spec §7.5.2 规则 9 |
+| **新授权（Approved）** | **拒绝建立控制会话** + 返回 `EMX-E-AUDIT-003` + 告警 | 无法记录授权事件，高风险操作无证据 | spec §7.5.2 规则 4/9 |
+| **已建立会话（控制中）** | **不中断**已建立会话（其授权事件已落盘），但终止事件进入 outbox 等待恢复 | 已建立会话有审计证据，无需中断 | spec §6.2 规则 5 |
+| **终止（Terminated）** | **通道立即断开**（安全优先），终止事件进入 outbox 重试 | 被控方恢复控制权不能延迟 | spec §7.5.2 规则 5 |
+
+**关键裁决**：Audit Store 不可用时，**新远程控制申请/授权全部拒绝**（Fail-Closed），但**已建立会话不中断**（其审计证据已存在）。这是"安全关键事件 Fail-Closed"与"可用性"的平衡——新会话无证据则拒绝，旧会话有证据则保留。
+
+### 4.1.10 Durable Queue 数据主权与加密
+
+**数据主权**：Durable Queue 基于 PostgreSQL `outbox` 表，与 `audit_events` 同库，存储于企业控制的基础设施（spec §9），不依赖外部 SaaS MQ。
+
+**加密策略**：
+
+| 加密对象 | 加密方式 | 关联 spec |
+|---------|---------|----------|
+| outbox 表 `payload` 字段 | PostgreSQL TDE（透明数据加密，可选）或应用层加密 | spec §6.3 规则 5 |
+| outbox 表传输 | PostgreSQL 连接强制 TLS（内网） | spec §6.3 规则 1 |
+| audit_events 表 | 同 v0.3 §3.7.6，append-only + 哈希链 | spec §6.3 规则 6 |
+
+**保留期**：outbox 记录在 `status=DONE` 后保留 7 天（可配置），用于排查 Relay 问题，超期清理。`audit_events` 保留期 ≥ 365 天（spec §6.3 规则 6）。
+
+### 4.1.11 Audit Failure Policy 表格（完整）
+
+**Audit Failure Policy**（覆盖所有事件类型在审计不可写时的行为）：
+
+| 事件类型 | 风险等级 | 审计不可写时业务行为 | 用户感知 | 运维告警 | 关联 spec |
+|---------|---------|---------------------|---------|---------|----------|
+| `Meeting Created` | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| `Guest Invited` | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| `Guest Joined`（候机室） | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| `Guest Approved` | **Security-Critical** | **拒绝签发 Guest Token**，业务回滚 | 主持人收到"系统错误，请重试" | ✅ 告警 | spec §7.2.1 规则 4 |
+| `Screen Share Started` | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| `Screen Share Stopped` | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| `Recording Started` | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| `Recording Stopped` | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| `Remote Control Requested` | **Security-Critical** | **拒绝转发授权对话框**，请求失败 | 控制方收到"系统错误，请重试" | ✅ 告警 | spec §7.5.2 规则 3/9 |
+| `Remote Control Approved` | **Security-Critical** | **拒绝建立控制通道**，授权失败 | 双方收到"系统错误，请重试" | ✅ 告警 | spec §7.5.2 规则 4/9 |
+| `Remote Control Rejected` | **Security-Critical** | **拒绝返回拒绝结果**，请求失败 | 控制方收到"系统错误，请重试" | ✅ 告警 | spec §7.5.5 异常 2 |
+| `Remote Control Terminated` | **Security-Critical** | **通道立即断开**（安全优先），终止事件入队重试 | 双方收到"控制已终止" | ✅ 告警 | spec §7.5.2 规则 5/9 |
+| `Participant Removed` | **Security-Critical** | **拒绝执行移除**，操作失败 | 主持人收到"系统错误，请重试" | ✅ 告警 | spec §7.7 |
+| `Meeting Ended` | Low-Risk | 业务继续，异步补写 | 无感知 | ✅ 告警 | spec §7.10.4 |
+| 权限/策略变更 | **Security-Critical** | **拒绝变更**，操作失败 | 管理员收到"系统错误，请重试" | ✅ 告警 | spec §7.5.2 规则 11 |
+
+**错误码新增**：
+
+| 错误码 | 含义 | HTTP 状态码 | 关联事件 |
+|--------|------|------------|---------|
+| `EMX-E-AUDIT-002` | 审计不可写，远程控制申请拒绝 | 503 | `Remote Control Requested` |
+| `EMX-E-AUDIT-003` | 审计不可写，远程控制授权拒绝 | 503 | `Remote Control Approved` |
+| `EMX-E-AUDIT-004` | 审计不可写，Guest 批准拒绝 | 503 | `Guest Approved` |
+| `EMX-E-AUDIT-005` | 审计不可写，参会者移除拒绝 | 503 | `Participant Removed` |
+| `EMX-E-AUDIT-006` | 审计不可写，策略变更拒绝 | 503 | 权限/策略变更 |
+
+> **AR-02 闭合声明**：v0.4 已补充 Audit Event 分级、Security-Critical Fail-Closed 策略、Transactional Outbox、Durable Queue、重启恢复、去重、顺序保证、哈希链并发一致性、Audit Store 不可用时 Remote Control 行为、Queue 数据主权与加密、完整 Audit Failure Policy 表格。可追溯至 spec §6.3 规则 6、§7.5.2 规则 9、§7.10.1/§7.10.4。
+
+## 4.2 AR-03 — Yjs Canonical Version Model 收敛
+
+### 4.2.1 问题陈述与关联需求
+
+**问题**：v0.3 §3.2.8 同时出现三套版本机制：Yjs State Vector、Lamport Clock、EMX 业务层 revision（`WhiteboardDocument.version`）。若三者未明确主从关系，可能存在"三套互相不一致的版本真相"，导致协同冲突解决错误。
+
+**必须裁决**：明确 Canonical Version（权威版本机制），其余版本机制仅作为辅助/元数据，不能成为第二套 CRDT 真相。
+
+### 4.2.2 Canonical Version 裁决声明
+
+> **裁决（AR-03 Canonical Version）**：
+>
+> 1. **Yjs Update / State Vector 是白板协作状态的 canonical synchronization mechanism（权威同步机制）**。所有客户端与服务端的白板状态同步、增量计算、冲突合并均以 Yjs State Vector 为基准。
+>
+> 2. **EMX 业务层 `revision`（`WhiteboardDocument.version`，spec §11.5）仅作为 business metadata / snapshot index**，用于：
+>    - 快照版本管理（每次持久化快照递增）；
+>    - 会后文档加载时标识快照版本；
+>    - **不参与** CRDT 合并、冲突解决、增量同步决策。
+>
+> 3. **Lamport Clock** 是 Yjs 内部实现细节（操作全序标记），EMX 不直接暴露或依赖，仅由 Yjs 内部使用。
+>
+> 4. **禁止**在 EMX 业务层基于 `revision` 实现自定义冲突解决逻辑（如"revision 大者胜出"），这会与 Yjs CRDT 数学性质冲突，导致状态分叉。
+
+**裁决理由**：
+- Yjs 是生产级 CRDT 实现（v0.3 §3.2.4 选型），其 State Vector 是 CRDT 数学保证强最终一致（SEC）的核心；
+- 自研版本号机制会引入与 CRDT 不一致的风险，违反 spec §1.5"不自研"原则；
+- EMX `revision` 仅是持久化快照索引，与协同同步无关，两者职责分离。
+
+**可追溯性**：spec §11.5 `WhiteboardDocument.version`（"支持 undo/redo 与最终一致合并"）、§7.4.2 规则 2（"最终一致"）、§6.2 规则 4（"会议状态最终一致"）。
+
+### 4.2.3 重复操作处理
+
+**问题**：同一操作（如白板绘制矩形 R1）因网络重传/客户端重试重复到达时，如何去重？
+
+**裁决**：Yjs Update 自身携带 `clientID` + `clock`（State Vector 分量），Yjs `applyUpdate` **天然幂等**：
+
+| 重复场景 | Yjs 处理 | 结果 | 关联 spec |
+|---------|---------|------|----------|
+| 同一 clientID + 同一 clock 的 Update 重复到达 | Yjs 检测到 State Vector 已包含该 (clientID, clock) → 丢弃 | 无重复应用 | spec §7.4.2 规则 2 |
+| 同一 objectId 的 Insert 重复到达 | Yjs 按 (clientID, clock) 去重，不产生重复对象 | 单一对象 | spec §11.5 |
+| 同一 objectId 的 Delete 重复到达 | tombstone 已存在 → 重复 Delete 幂等 | 保持删除 | §3.2.5 |
+
+**EMX 业务层无需额外去重**：依赖 Yjs State Vector 的 (clientID, clock) 去重，不自建去重表。
+
+### 4.2.4 Update 重放顺序与一致性
+
+**问题**：Update 重放（如会后加载、断线重连补全）时，顺序是否影响最终状态？
+
+**裁决**：Yjs CRDT 保证**重放顺序无关**（commutative + associative）：
+
+| 重放场景 | 顺序要求 | 最终状态 | 关联 spec |
+|---------|---------|---------|----------|
+| 两个并发 Update 交换顺序到达 | 顺序无关 | 相同（CRDT 交换律） | spec §7.4.2 规则 2 |
+| 快照 + 增量 Update 重放 | 先应用快照，后应用 Update（顺序无关增量间） | 相同 | §3.2.7 |
+| 断线期间多个 Update 重连后补全 | 按 (clientID, clock) 去重后应用，顺序无关 | 相同 | spec §6.2 规则 2 |
+
+**关键保证**：Yjs CRDT 的数学性质（交换律、结合律、幂等性）保证任意顺序应用相同 Update 集合，最终状态一致。EMX 无需保证 Update 传输顺序，仅需保证 Update 最终到达（可靠传输）。
+
+### 4.2.5 Client 重连基于 State Vector 差量同步
+
+**问题**：客户端断线重连后，如何高效同步缺失的 Update（非全量重传）？
+
+**裁决**：基于 State Vector 差量同步（Yjs 原生支持）：
+
+```plantuml
+@startuml
+title Client 重连 State Vector 差量同步
+
+participant "客户端 A\n(断线前 SV_A = {A:5, B:3})" as A
+participant "EMX Server\n(当前 SV_S = {A:5, B:7})" as S
+
+== 1. 重连 ==
+A -> S : Reconnect (携带 SV_A = {A:5, B:3})
+S -> S : 计算 diff = SV_S - SV_A = {A:0, B:4} (B 缺失 4 个操作)
+
+== 2. 差量 Update ==
+S -> A : diffUpdate = YDoc_S.diffUpdate(SV_A) (仅 B 的 4 个操作)
+A -> A : applyUpdate(diffUpdate)
+A -> A : SV_A 更新为 {A:5, B:7}
+
+== 3. 客户端本地新增操作同步 ==
+A -> S : diffUpdate_A = YDoc_A.diffUpdate(SV_S_last_known) (A 断线期间的操作)
+S -> S : applyUpdate(diffUpdate_A)
+S -> S : 广播给其他客户端
+
+note over A, S
+  关键保证:
+  - 仅传输差量, 非全量重传
+  - State Vector 比较是偏序, 精确计算缺失
+  - 重连后状态最终一致
+  关联 spec §6.2 规则 2, §3.2.8
+end note
+@enduml
+```
+
+### 4.2.6 State Vector 不一致时的合并策略
+
+**问题**：两个客户端 State Vector 不一致（各有对方缺失的操作）时，如何合并？
+
+**裁决**：Yjs CRDT **双向差量交换**自动合并：
+
+| 场景 | 客户端 A SV | 客户端 B SV | 合并方式 | 结果 | 关联 spec |
+|------|------------|------------|---------|------|----------|
+| A 有 B 缺失的操作 | {A:5, B:3} | {A:2, B:3} | A → B 发送 diff {A:3..5} | 双方 {A:5, B:3} | spec §7.4.2 规则 2 |
+| B 有 A 缺失的操作 | {A:5, B:3} | {A:5, B:7} | B → A 发送 diff {B:4..7} | 双方 {A:5, B:7} | spec §7.4.2 规则 2 |
+| 双方各有缺失 | {A:5, B:3} | {A:2, B:7} | 双向交换 diff | 双方 {A:5, B:7} | spec §6.2 规则 4 |
+
+**合并保证**：Yjs CRDT 强最终一致（SEC）保证所有客户端最终 State Vector 收敛，且文档状态一致。EMX Server 作为中继，协助双向差量交换，不参与合并决策（合并由 Yjs 数学性质保证）。
+
+### 4.2.7 Snapshot + Update Log 恢复完整文档状态
+
+**问题**：从快照和操作日志恢复完整文档状态的流程？
+
+**裁决**：Snapshot 作为基线，Update Log 作为增量，Yjs 保证恢复一致性：
+
+```plantuml
+@startuml
+title Snapshot + Update Log 恢复流程
+
+participant "客户端" as C
+participant "EMX Server" as S
+database "MinIO\n(快照)" as MinIO
+database "PostgreSQL\n(Update Log)" as PG
+
+== 1. 加载快照（基线） ==
+C -> S : 请求加载文档 (documentId)
+S -> MinIO : 读取最新快照 (final.bin, SV_snapshot = {A:10, B:8})
+MinIO --> S : 快照二进制
+S -> S : YDoc.applyUpdate(快照) → 恢复到 SV_snapshot 状态
+
+== 2. 加载快照后的 Update Log（增量） ==
+S -> PG : 查询 Update Log (documentId, timestamp > snapshot_time)
+PG --> S : Update 序列 [u1, u2, ..., un] (SV 范围 (A:10, B:8) → (A:15, B:12))
+S -> S : 逐条 YDoc.applyUpdate(u_i) → 恢复到最新状态
+
+== 3. 返回客户端 ==
+S --> C : 返回 YDoc 当前状态 + SV_latest
+
+note over C, S
+  恢复保证:
+  - 快照是基线, Update Log 是增量
+  - Yjs 保证快照 + 增量恢复一致性 (§3.2.7)
+  - 无需全量重放从文档创建以来的所有操作
+  - 关联 spec §11.5, §3.2.7
+end note
+@enduml
+```
+
+### 4.2.8 并发编辑冲突合并结果
+
+**问题**：两个客户端同时编辑同一位置（如同一白板对象属性）时的合并结果？
+
+**裁决**：Yjs 对不同操作类型采用不同合并策略，均由 CRDT 数学保证：
+
+| 并发场景 | Yjs 合并策略 | 合并结果 | 关联 spec |
+|---------|------------|---------|----------|
+| A 和 B 同时绘制**不同对象**（objectId 不同） | 各自 Insert，无冲突 | 两对象均保留 | spec §7.4.2 规则 2 |
+| A 和 B 同时修改**同一对象属性**（如矩形颜色） | Yjs LWW（基于操作时钟，后写胜出） | 后写者胜出，最终一致 | spec §7.4.2 规则 2 |
+| A 和 B 同时**移动**同一对象到不同位置 | Yjs LWW（位置属性后写胜出） | 后写者位置胜出 | spec §7.4.2 规则 2 |
+| A 和 B 同时**重命名**同一文本对象 | Yjs LWW（text 属性后写胜出） | 后写者文本胜出 | spec §11.5 |
+
+**LWW 公平性说明**：Yjs LWW 基于 Lamport Clock（逻辑时钟），非物理时钟，避免客户端时钟不同步问题。后写者由 Lamport Clock 全序决定，所有客户端对"谁后写"达成一致。
+
+### 4.2.9 删除与修改冲突解决
+
+**问题**：一个客户端删除对象、另一个客户端修改同一对象时的冲突解决？
+
+**裁决**：Yjs tombstone 优先，修改操作作用于已删除对象被丢弃：
+
+```plantuml
+@startuml
+title 删除与修改冲突解决
+
+participant "客户端 A" as A
+participant "EMX Server" as S
+participant "客户端 B" as B
+
+== 并发操作 ==
+A -> A : 删除对象 R1 (author=A, 允许)
+A -> S : Update_A (delete R1, tombstone)
+B -> B : 修改对象 R1 颜色为红色 (author=B)
+B -> S : Update_B (update R1.color = red)
+
+== Server 转发 ==
+S -> B : 转发 Update_A (delete R1)
+S -> A : 转发 Update_B (update R1.color)
+
+== 各端合并 ==
+B -> B : applyUpdate(Update_A) → R1 标记 tombstone
+B -> B : applyUpdate(Update_B) → R1 已删除, 修改操作丢弃
+A -> A : applyUpdate(Update_B) → R1 已删除(tombstone), 修改无效
+A -> A : applyUpdate(Update_A) → R1 保持 tombstone
+
+note over A, B
+  结果: R1 已删除, 修改无效, 无复活
+  Yjs tombstone 保证:
+  - 删除操作优先, 修改操作作用于已删除对象被丢弃
+  - 所有客户端最终一致 (R1 不存在)
+  - 关联 spec §7.4.2 规则 4, §3.2.5
+end note
+@enduml
+```
+
+**对象复活防护**：Yjs tombstone 是永久标记（不可清除，除非 GC 且所有客户端已同步），保证删除对象不会因并发修改复活。EMX 不启用 Yjs GC（保留 tombstone），代价是元数据开销，但保证删除一致性。
+
+### 4.2.10 Undo/Redo 在 CRDT 下的语义
+
+**问题**：Undo/Redo 在 CRDT 下不能简单撤销（可能撤销他人的并发操作），语义如何定义？
+
+**裁决**：采用 Yjs `UndoManager` 的**操作者隔离 Undo**语义：
+
+| Undo 场景 | Yjs UndoManager 行为 | 结果 | 关联 spec |
+|---------|---------------------|------|----------|
+| A 撤销自己刚绘制的矩形 R1 | Undo 仅撤销 A 的 Insert(R1) 操作 | R1 被删除（tombstone），B 的对象不受影响 | spec §7.4.2 规则 1 |
+| A 撤销自己的操作，但 B 已基于该操作做了并发修改 | Undo 撤销 A 的操作，B 的修改按 CRDT 合并 | A 的操作效果撤销，B 的修改保留（可能视觉变化） | spec §7.4.2 规则 2 |
+| A 尝试 Undo B 的操作 | UndoManager 仅跟踪 A 的操作，无法 Undo B 的操作 | 拒绝（A 无权 Undo B 的操作） | spec §7.4.2 规则 4 |
+| A Redo 自己撤销的操作 | Redo 重新应用 A 的操作 | 操作恢复（若未与他人删除冲突） | spec §7.4.2 规则 1 |
+
+**关键语义**：
+1. **Undo 仅撤销自己的操作**（操作者隔离），不撤销他人的并发操作；
+2. **Undo 通过反向操作实现**（如 Insert 的反向是 Delete），非"回退到历史版本"（CRDT 无全局回退）；
+3. **Undo 不保证完全恢复原状**（若他人已基于该操作做了并发修改，Undo 后修改保留）；
+4. **Undo/Redo 不跨用户**（A 不能 Undo B 的操作，关联 spec §7.4.2 规则 4"仅作者或主持人可删除"）。
+
+**实现**：Yjs `UndoManager` 绑定到特定 `clientID`，仅跟踪该 client 的操作历史，自动处理反向操作生成。
+
+> **AR-03 闭合声明**：v0.4 已明确 Yjs State Vector 为 Canonical Version，EMX revision 仅作 business metadata，并补充重复操作去重、Update 重放顺序、Client 重连差量同步、State Vector 不一致合并、Snapshot + Update Log 恢复、并发编辑冲突、删除与修改冲突、Undo/Redo 语义共 10 项裁决。可追溯至 spec §11.5、§7.4.2 规则 2/4、§6.2 规则 2/4。
+
+## 4.3 AR-04 — Capacity Target / Verified Boundary 明确声明
+
+### 4.3.1 问题陈述与关联需求
+
+**问题**：v0.3 §3.3 已建立容量模型（§3.3.1~§3.3.13），但未在文档显著位置明确声明"设计目标 ≠ 可承诺容量"。Task 阶段若直接引用设计目标作为"系统支持 X 并发"，会跳过验证环节，违反 spec §14 验收原则（REQ → DESIGN → TASK → CODE → TEST → EVIDENCE → ACCEPTANCE）。
+
+**必须补充**：明确 Architecture Design Capacity 与 Production Verified Capacity 的区分，并定义 Task 阶段验证门。
+
+### 4.3.2 明确声明：Architecture Design Capacity ≠ Production Verified Capacity
+
+> **声明（AR-04 Capacity Boundary）**：
+>
+> 1. **Architecture Design Capacity（设计容量）**：v0.3 §3.3 给出的所有容量数值（单会议 50 人、SFU 带宽 200 Mbps、并发 10/50/200 会议等）均为**设计目标**，是架构设计的理论估算，作为容量规划输入与硬件选型依据。
+>
+> 2. **Production Verified Capacity（已验证容量）**：必须通过真实环境的负载测试验证后才能确认的容量。**设计目标不等于已验证容量**。
+>
+> 3. **Architecture Design Capacity ≠ Production Verified Capacity**，两者关系为：Design Capacity → Load Test → Physical Evidence → Verified Capacity。
+>
+> 4. **Task 阶段不得直接写"系统支持 50 人 × N 并发"**，而应写"Target Capacity = 50 人 × N 并发，需通过 Load Test 验证，Verified Capacity 以 Physical Evidence 为准"。
+
+**可追溯性**：spec §6.1 指标 8（"单会议支持参会者 ≥ 50 人（V1 目标）"）、§6.1 指标 8 后注（"具体人数和并发指标在 EMX-002 Design 阶段通过容量模型确定"）、§14 验收原则。
+
+### 4.3.3 Task 阶段验证门
+
+**验证门定义**：Task 阶段每个容量相关 Task 必须包含以下四阶段，不得跳过：
+
+| 阶段 | 内容 | 交付物 | 责任方 |
+|------|------|--------|--------|
+| **Target Capacity** | 引用 design.md §3.3 的设计目标值 | Target 值 + 关联 spec 指标 | Task Decomposition |
+| **Load Test** | 设计负载测试方案（客户端数、压测脚本、指标采集） | 压测方案 + 压测脚本 | Task + Test |
+| **Physical Evidence** | 在真实环境执行压测，采集实测数据 | 压测报告（P95 延迟、CPU、内存、带宽、错误率） | Test + Implementation |
+| **Verified Capacity** | 基于实测数据确认可承诺容量 | Verified 值 + 偏差分析 | Gate 评审 |
+
+**禁止行为**：
+- ❌ Task 直接写"系统支持 50 人并发"（跳过验证）；
+- ❌ Task 用设计目标作为验收标准（应用 Verified Capacity）；
+- ❌ Implementation 阶段未执行压测即声明容量达标；
+- ❌ 用模拟环境（mock SFU/无真实网络）的压测结果作为 Physical Evidence。
+
+### 4.3.4 最终证据来源
+
+**强制要求**：Verified Capacity 的最终证据必须来自**真实环境**的负载测试，真实环境定义如下：
+
+| 组件 | 要求 | 关联 spec |
+|------|------|----------|
+| 操作系统 | 真实 Debian 11/12（非容器模拟） | spec §10 |
+| SFU | 真实 LiveKit 集群（非 mock） | spec §10.1 |
+| TURN | 真实 coturn（非 mock） | spec §10.1 |
+| 数据库 | 真实 PostgreSQL（非 SQLite/H2） | spec §11 |
+| 缓存 | 真实 Redis（非 mock） | spec §4.2 |
+| 对象存储 | 真实 MinIO（非本地 FS） | spec §7.8.1 |
+| 网络 | 真实企业内网/公网（非 localhost） | spec §10.1 |
+| 客户端 | 真实浏览器（Chrome/Edge/Safari/Firefox）× N 并发 | spec §6.5 |
+
+**禁止的"伪证据"**：
+- 单机 localhost 压测（无真实网络延迟）；
+- mock SFU（无真实 RTP 转发）；
+- 单客户端模拟 N 并发（无真实 WebSocket 连接数压力）；
+- 容量估算文档（无实测数据）。
+
+### 4.3.5 V1 容量验证计划
+
+**V1 必须验证的容量指标**（Task/Test 阶段执行，此处仅声明验证项，不执行）：
+
+| 验证项 ID | 设计目标 | 验证方法 | 通过标准 | 真实环境要求 | 关联 spec |
+|----------|---------|---------|---------|------------|----------|
+| CAP-01 | 单会议 50 人音视频并发 | 50 真实浏览器客户端压测 | P95 媒体延迟 ≤ 200ms，无媒体中断 | 真实 LiveKit + TURN + Debian | spec §6.1 指标 4/8 |
+| CAP-02 | 单会议 50 人白板并发绘制 | 50 客户端并发白板操作 | P95 同步延迟 ≤ 100ms，最终一致 | 真实 Redis + PostgreSQL | spec §6.1 指标 6 |
+| CAP-03 | 并发 10 会议（小型） | 500 客户端分布式压测 | 全部会议正常，CPU < 80% | 真实多节点部署 | spec §6.1 指标 8 |
+| CAP-04 | 信令延迟 ≤ 500ms P95 | 信令延迟埋点统计 | P95 ≤ 500ms | 真实 WebSocket + 网络延迟 | spec §6.1 指标 3 |
+| CAP-05 | 远程控制延迟 ≤ 80ms P95（同地域） | 控制指令延迟统计 | P95 ≤ 80ms | 真实 Remote Agent + Windows | spec §6.1 指标 9 |
+| CAP-06 | 录制吞吐 ≤ 6.5 Mbps/会议 | 录制文件大小/时长统计 | ≤ 2.9 GB/h | 真实 MinIO + LiveKit 录制 | §3.3.5 |
+| CAP-07 | 审计写入 ≥ 1000 TPS | 审计写入压测 | TPS ≥ 1000，无丢失 | 真实 PostgreSQL append-only | spec §7.10.2 |
+| CAP-08 | 故障切换 ≤ 5s | 故障注入测试 | 切换时间 ≤ 5s，会议不中断 | 真实主从 + Sentinel | spec §6.2 |
+| CAP-09 | Guest 入会 ≤ 3s P95 | 端到端入会延迟统计 | P95 ≤ 3s | 真实 Gateway + 候机室 | spec §6.1 指标 2 |
+| CAP-10 | 会议创建 ≤ 2s P95 | 创建延迟统计 | P95 ≤ 2s | 真实 PostgreSQL + MinIO | spec §6.1 指标 1 |
+
+**偏差处理**：若 Verified Capacity < Design Capacity，需在 Gate 评审时声明偏差，并决策：
+1. 调整 Design Capacity（回到 design.md 修订）；
+2. 优化实现（回到 Implementation 优化）；
+3. 扩容硬件（调整部署规格）；
+4. 降级 V1 容量承诺（回到 spec.md 修订，需 PM 授权）。
+
+> **AR-04 闭合声明**：v0.4 已明确声明 Architecture Design Capacity ≠ Production Verified Capacity，定义 Task 阶段四阶段验证门（Target → Load Test → Physical Evidence → Verified），明确真实环境要求与禁止的伪证据，列出 V1 必须验证的 10 项容量指标（CAP-01~CAP-10）。可追溯至 spec §6.1、§14 验收原则。
+
+## 4.4 AR-05 — Single Node / Enterprise / HA Deployment Boundary 三层分层
+
+### 4.4.1 问题陈述与关联需求
+
+**问题**：v0.3 同时出现模块化单体（§2.1.2）、Docker Compose（§3.5.4）、HA 部署（§3.4.5）、SFU Cluster（§3.3.9），但未明确区分部署等级。读者无法判断"V1 必须交付哪一层"、"哪一层是 P1/P2"，可能导致 V1 范围模糊。
+
+**必须补充**：明确三层部署等级（Tier 1/2/3），每层定义节点数、组件部署方式、状态位置、是否 V1 必须交付。
+
+**可追溯性**：spec §10（部署目标 Debian Server）、§12.2（V1 不做全球多区域灾备）、§6.2 规则 1（可用性 ≥ 99.5%）。
+
+### 4.4.2 三层部署等级定义
+
+```plantuml
+@startuml
+title EMX 三层部署等级
+
+skinparam rectangle {
+    BackgroundColor #F5F5F5
+    BorderColor #333333
+}
+
+rectangle "Tier 1 — Development / Single Node\n(开发/单机验证)" as T1 {
+    rectangle "单 Debian 节点\nDocker Compose 全栈" as T1N
+    rectangle "V1 必须交付: ✅\n(开发自测与冒烟验证)" as T1V
+}
+
+rectangle "Tier 2 — Enterprise Single-Site\n(企业单站点生产)" as T2 {
+    rectangle "多节点 + 主从\nsystemd / Docker Compose" as T2N
+    rectangle "V1 必须交付: ✅\n(企业私有化生产部署)" as T2V
+}
+
+rectangle "Tier 3 — HA / Scale-out\n(高可用/横向扩展)" as T3 {
+    rectangle "多实例 LB + 集群分片\nsystemd + Keepalived" as T3N
+    rectangle "V1 必须交付: ⚠️ 部分\n(单 SFU 集群分片 V1 交付,\n跨机房灾备 V1 不交付)" as T3V
+}
+
+T1 --> T2 : 容量增长
+T2 --> T3 : 可用性要求提升
+
+note bottom
+  关联 spec §10 (Debian 部署),
+  §12.2 (V1 不做全球多区域灾备),
+  §6.2 规则 1 (可用性 ≥ 99.5%)
+end note
+@enduml
+```
+
+### 4.4.3 Tier 1 — Development / Single Node
+
+| 维度 | Tier 1 配置 | 关联 spec |
+|------|------------|----------|
+| **节点数** | 1 台 Debian Server | spec §10 |
+| **组件部署方式** | Docker Compose 全栈单机（所有容器同机） | §3.5.4 |
+| **状态位置** | 本地卷（PostgreSQL/Redis/MinIO 同机） | — |
+| **SFU** | 单 LiveKit 节点（host 网络） | spec §10.1 |
+| **TURN** | 单 coturn（同机） | spec §10.1 |
+| **Gateway** | 单 Nginx（无 Keepalived） | spec §10 |
+| **数据库** | PostgreSQL 单实例（无主从） | — |
+| **缓存** | Redis 单实例（无主从） | — |
+| **对象存储** | MinIO 单节点（无纠删码） | — |
+| **可横向扩展组件** | 无（单机） | — |
+| **必须共享存储组件** | 无（同机本地卷） | — |
+| **故障影响** | 单机故障 → 全站不可用 | — |
+| **可用性目标** | 无（开发环境） | — |
+| **容量目标** | ≤ 2 并发会议 × 50 人（单机上限） | §3.3.8 小型 |
+| **V1 必须交付** | ✅ 是（开发自测、冒烟验证、Demo） | spec §12.1 |
+| **用途** | 开发、自测、冒烟、Demo、客户演示 | — |
+
+### 4.4.4 Tier 2 — Enterprise Single-Site
+
+| 维度 | Tier 2 配置 | 关联 spec |
+|------|------------|----------|
+| **节点数** | 5~7 台 Debian Server（边缘 2 + 业务 2 + 数据 1~3） | spec §10 |
+| **组件部署方式** | systemd 原生服务 + Docker Compose（可选） | §3.5.4 |
+| **状态位置** | 独立 LV/SSD（PostgreSQL/Redis 各独立卷） | §3.5.5 |
+| **SFU** | 2~4 节点集群（按 meetingId 分片） | spec §10.1 |
+| **TURN** | 2 节点（主备，客户端备选） | spec §10.1 |
+| **Gateway** | 2 节点 + Keepalived VIP 主备 | §3.4.5 |
+| **数据库** | PostgreSQL 主从 + 流复制 + 自动故障转移 | spec §6.2 规则 4 |
+| **缓存** | Redis 主从 + Sentinel | spec §6.2 规则 4 |
+| **对象存储** | MinIO 3 节点纠删码 | spec §7.8.4 |
+| **Internal CA** | 1 节点（Intermediate CA，Root 离线） | §3.1.2 |
+| **可横向扩展组件** | SFU 节点（按 meetingId 分片）、业务服务实例（无状态 LB） | §3.3.9 |
+| **必须共享存储组件** | PostgreSQL（主从共享 WAL）、MinIO（纠删码跨节点） | — |
+| **故障影响** | 单节点故障 → 部分降级（§3.4.7 三态矩阵），非全站 | spec §6.2 规则 5 |
+| **可用性目标** | ≥ 99.5%（V1，单实例维护窗口除外） | spec §6.2 规则 1 |
+| **容量目标** | 10~50 并发会议 × 50 人 | §3.3.8 小型/中型 |
+| **V1 必须交付** | ✅ 是（企业私有化生产部署主力形态） | spec §12.1 |
+| **用途** | 中小企业生产部署、单站点私有化 | — |
+
+### 4.4.5 Tier 3 — HA / Scale-out
+
+| 维度 | Tier 3 配置 | 关联 spec |
+|------|------------|----------|
+| **节点数** | 12+ 台 Debian Server（边缘 2 + 业务 4 + 媒体 8+ + 数据 4+） | spec §10 |
+| **组件部署方式** | systemd + Keepalived + 企业硬件 LB（可选） | §3.5.4 |
+| **状态位置** | 独立 LV/SSD + 跨节点共享存储（MinIO 分布式） | §3.5.5 |
+| **SFU** | 8+ 节点集群（按 meetingId 分片 + 负载均衡） | spec §10.1 |
+| **TURN** | 4+ 节点（多实例 + 客户端备选） | spec §10.1 |
+| **Gateway** | 2+ 节点 + Keepalived VIP / 企业硬件 LB | §3.4.5 |
+| **数据库** | PostgreSQL 主从 + 多读副本 + 自动故障转移 | spec §6.2 规则 4 |
+| **缓存** | Redis 集群（分片 + Sentinel） | spec §6.2 规则 4 |
+| **对象存储** | MinIO 4+ 节点纠删码 + 跨站点镜像（可选） | spec §7.8.4 |
+| **Internal CA** | 1 主 + 1 备（Intermediate CA，Root 离线） | §3.1.2 |
+| **可横向扩展组件** | SFU、业务服务、WebSocket Signaling（粘性）、Recording Service、TURN | §3.3.9 |
+| **必须共享存储组件** | PostgreSQL（主从 + 读副本）、Redis 集群、MinIO 分布式 | — |
+| **故障影响** | 单节点故障 → 仅影响其上会议/分片，非全站；多节点故障 → 降级 | spec §6.2 规则 5 |
+| **可用性目标** | ≥ 99.9%（V1 不强制，需 Tier 3 验证） | spec §6.2 规则 1 |
+| **容量目标** | 200+ 并发会议 × 50 人 | §3.3.8 大型 |
+| **V1 必须交付** | ⚠️ 部分：单 SFU 集群分片 + 多业务实例 LB ✅ 交付；跨机房灾备 ❌ 不交付（spec §12.2） | spec §12.2 |
+| **用途** | 大型企业、高并发场景、单站点高可用 | — |
+
+### 4.4.6 三层对比汇总
+
+| 维度 | Tier 1 单机 | Tier 2 企业单站点 | Tier 3 HA/Scale-out |
+|------|------------|------------------|---------------------|
+| 节点数 | 1 | 5~7 | 12+ |
+| 并发会议 | ≤ 2 | 10~50 | 200+ |
+| 可用性 | 无 | ≥ 99.5% | ≥ 99.9%（V1 不强制） |
+| PostgreSQL | 单实例 | 主从 | 主从 + 读副本 |
+| Redis | 单实例 | 主从 + Sentinel | 集群分片 |
+| MinIO | 单节点 | 3 节点纠删码 | 4+ 节点纠删码 |
+| SFU | 单节点 | 2~4 集群分片 | 8+ 集群分片 |
+| Gateway | 单 Nginx | 2 + Keepalived | 2+ + Keepalived/LB |
+| 编排 | Docker Compose | systemd / Docker Compose | systemd + Keepalived |
+| 跨机房灾备 | ❌ | ❌ | ❌（V1 不交付，spec §12.2） |
+| **V1 必须交付** | ✅ | ✅ | ⚠️ 部分 |
+
+### 4.4.7 V1 部署交付边界声明
+
+> **声明（AR-05 V1 部署边界）**：
+>
+> 1. **V1 必须交付 Tier 1 + Tier 2**：开发单机（Tier 1）用于开发自测与冒烟验证；企业单站点（Tier 2）为 V1 生产部署主力形态。
+>
+> 2. **V1 部分交付 Tier 3**：单 SFU 集群分片 + 多业务实例负载均衡 ✅ 交付（属 Tier 3 子集）；跨机房灾备、多区域 ❌ 不交付（spec §12.2"V1 不做全球多区域灾备"）。
+>
+> 3. **V1 不交付跨机房灾备**：整机房故障需灾备，V1 不做（spec §12.2），Tier 3 的跨机房能力划入 P1/V2。
+>
+> 4. **部署等级与容量验证关系**：Tier 1 容量验证仅用于冒烟（非 Physical Evidence）；Tier 2/Tier 3 容量验证为 AR-04 要求的真实环境 Physical Evidence。
+
+> **AR-05 闭合声明**：v0.4 已明确三层部署等级（Tier 1 单机开发 / Tier 2 企业单站点 / Tier 3 HA/Scale-out），每层定义节点数、组件部署方式、状态位置、可扩展组件、共享存储、故障影响、可用性目标、容量目标、V1 交付边界。明确 V1 必须交付 Tier 1 + Tier 2，部分交付 Tier 3，不交付跨机房灾备。可追溯至 spec §10、§12.2、§6.2 规则 1。
+
+## 4.5 AR-06 — Screen Share → Remote Control 前置关系 ADR
+
+### 4.5.1 问题陈述与关联需求
+
+**问题**：v0.3 §3.7.11 将"Remote Control 依赖 Screen Share（前提）"隐藏在架构图中，但 EMX-001 spec.md §7.5.2 规则 2 明确写"远程控制建立前被控方须正在共享屏幕"。这属于**产品行为约束**，不能隐藏在架构图中，必须记录为显式 ADR（Architecture Decision Record）。
+
+**必须补充**：以显式 ADR 格式记录此决策，关联到 spec.md 需求约束。
+
+### 4.5.2 ADR-001：Screen Share 作为 Remote Control 前置条件
+
+```markdown
+# ADR-001: Screen Share 作为 Remote Control 前提条件
+
+**状态**：ACCEPTED
+**日期**：2026-09-20
+**决策者**：PM（Architecture Review 一轮）+ 设计团队
+**关联需求**：EMX-001 spec.md §7.5.2 规则 2、§7.3.1 规则 7、§7.5.1 远程控制流程
+
+## 背景
+
+Remote Control（远程控制）允许控制方操作被控方本机鼠标/键盘/系统级输入。在 EMX 会议场景中，远程控制的典型用例是"客户向企业工程师演示软件问题，工程师远程操作客户电脑进行指导"（spec §7.5.1）。
+
+存在两种可能的设计方案：
+
+- **方案 A**：Screen Share 为 Remote Control 前置条件（被控方须正在共享屏幕，方可申请远程控制）；
+- **方案 B**：Remote Control 与 Screen Share 独立（只要求 Remote Target + Agent Online + Explicit Consent + Granted Permissions，不要求共享屏幕）。
+
+## 决策
+
+**采用方案 A**：Screen Share 为 Remote Control 前置条件。
+
+## 理由
+
+1. **与 spec.md 一致**：EMX-001 spec.md §7.5.2 规则 2 明确写"远程控制建立前被控方须正在共享屏幕"，验收条件为"[被控方未共享屏幕时申请控制] → [拒绝并提示先共享屏幕]"。方案 A 与 spec.md 完全一致，方案 B 会违反 spec.md 冻结需求。
+
+2. **用户体验合理性**：远程控制的典型场景是"边看边控制"——控制方需要看到被控方屏幕才能有效操作。若被控方未共享屏幕，控制方"盲操作"本机无意义，且被控方无法监督控制方行为。Screen Share 提供了控制方观察被控方屏幕的通道，是远程控制的天然前提。
+
+3. **安全监督性**：被控方共享屏幕意味着全体参会者可见被控方屏幕，被控方可以监督控制方操作。若 Remote Control 独立于 Screen Share，控制方可能在被控方不知情的情况下操作本机（即使有授权，但操作过程不可见），降低被控方的监督能力。
+
+4. **审计完整性**：Screen Share Started 事件先于 Remote Control Requested 事件，提供审计时序证据"被控方先公开屏幕，再授权控制"，符合 spec §7.5.2 规则 9 全程审计要求。
+
+5. **架构一致性**：v0.3 §3.7.11 已实现 Screen Share 与 Remote Control 架构分离 + 单向依赖（Remote Control 依赖 Screen Share），方案 A 与现有架构一致，无需重构。
+
+## 后果
+
+**正面后果**：
+- 与 spec.md 完全一致，无需求偏差；
+- 用户体验清晰：共享屏幕 → 申请控制 → 授权 → 控制；
+- 被控方监督能力增强（全体可见屏幕）；
+- 审计时序清晰（Screen Share Started → Remote Control Requested → Approved）。
+
+**负面后果**：
+- Remote Control 强依赖 Screen Share，若 Screen Share 故障（如 SFU 屏幕共享 Track 失败），Remote Control 不可建立；
+- 被控方必须先操作"共享屏幕"，增加一步操作（但 spec.md 已接受此约束）。
+
+**缓解措施**：
+- UI 引导：控制方申请 Remote Control 时，若被控方未共享屏幕，提示"请被控方先共享屏幕"（spec §7.5.2 规则 2 验收条件）；
+- Screen Share 故障时，Remote Control 优雅降级：提示"屏幕共享中断，远程控制不可用"，而非直接报错。
+
+## 替代方案（方案 B）拒绝理由
+
+- 违反 spec.md §7.5.2 规则 2（冻结需求，禁止修改）；
+- 控制方"盲操作"用户体验差；
+- 被控方监督能力降低；
+- 需重构 v0.3 §3.7.11 架构分离设计。
+
+## 关联
+
+- spec.md §7.5.2 规则 2（前提为屏幕共享）
+- spec.md §7.3.1 规则 7（Screen Share ≠ Remote Control）
+- spec.md §7.5.1（远程控制流程：客户共享屏幕 → 工程师请求 → 客户授权）
+- design.md §3.7.11（Screen Share 与 Remote Control 架构分离 + 单向依赖）
+- design.md §2.1.3.3（远程控制会话状态机：未授权状态前置条件"被控方正在共享屏幕"）
+- design.md §2.2.2 D 节（RequestControl 前置条件：被控方正在共享屏幕）
+```
+
+### 4.5.3 ADR 索引
+
+| ADR 编号 | 标题 | 状态 | 关联 spec |
+|---------|------|------|----------|
+| ADR-001 | Screen Share 作为 Remote Control 前提条件 | ACCEPTED | spec §7.5.2 规则 2、§7.3.1 规则 7、§7.5.1 |
+
+> **AR-06 闭合声明**：v0.4 已以显式 ADR-001 格式记录"Screen Share 作为 Remote Control 前提条件"决策，选择方案 A（与 spec.md §7.5.2 规则 2 一致），给出理由（与 spec.md 一致、用户体验、安全监督、审计完整性、架构一致性）、后果与缓解措施、拒绝方案 B 的理由。该决策不再隐藏在架构图中，可追溯至 spec §7.5.2 规则 2。
+
+## 4.6 AR-07 — Remote Agent 技术栈与 Windows Boundary 收敛
+
+### 4.6.1 问题陈述与关联需求
+
+**问题**：v0.3 §2.1.2 与 §3.1 写 "Agent Core (Go/Rust)"，对于 Architecture Gate 来说这不是最终设计——"Go 或 Rust"未明确选型，无法进入 Task Decomposition。
+
+**必须裁决**：明确选择 Go 还是 Rust，给出理由，并补充 Windows integration strategy、service/process model、privilege boundary、code signing、upgrade strategy。
+
+**关联约束**：
+- spec §7.6（Remote Agent 独立于浏览器）；
+- spec §6.5 规则 4（V1 仅 Windows 10/11 x64）；
+- 用户偏好 PREFERENCE_11/PREFERENCE_12（Go 后端）。
+
+### 4.6.2 Remote Agent 语言选型裁决
+
+> **裁决（AR-07 Remote Agent 语言）**：**采用 Go**。
+
+**候选比较**：
+
+| 维度 | Go | Rust | 关联约束 |
+|------|-----|------|---------|
+| **Windows input injection** | 通过 syscall + `golang.org/x/sys/windows` 调用 SendInput API，成熟 | 通过 winapi crate 调用 SendInput API，成熟 | spec §7.5.2 规则 8 |
+| **UAC 处理** | 通过 ShellExecuteEx + runas verb，社区有示例 | 通过 winapi crate，社区有示例 | §3.1.6 沙箱 |
+| **多显示器** | 调用 EnumDisplayMonitors API，Go syscall 支持 | 同上 | spec §7.6 |
+| **clipboard** | 调用 OpenClipboard/GetClipboardData API | 同上 | spec §7.5.2 规则 4 |
+| **process launch** | os/exec + CreateProcess API | std::process::Command + CreateProcess | spec §7.5.2 规则 4 |
+| **service/session** | github.com/kardianos/service（成熟 Windows service 库） | windows-service crate（较新） | §4.6.4 |
+| **security boundary** | 内存安全弱于 Rust（GC 语言，但有 unsafe syscall 边界） | 内存安全强（无 GC，编译期保证） | spec §6.3 |
+| **code signing** | Go 交叉编译 + signtool.exe 签名，成熟 | Rust 交叉编译 + signtool.exe 签名，成熟 | §4.6.5 |
+| **auto update** | 自实现或 github.com/inconshreveable/go-update | 自实现 | §4.6.6 |
+| **与 EMX Server 技术栈一致** | ✅ Server 为 Go（PREFERENCE_11/PREFERENCE_12），Agent 同 Go 可共享 protobuf/gRPC | ❌ Server 为 Go，Agent 为 Rust 需跨语言 FFI | PREFERENCE_11/12 |
+| **编译产物体积** | ~10~15 MB（静态链接） | ~5~10 MB（静态链接） | — |
+| **开发效率** | 高（编译快，GC 减少心智负担） | 中（编译慢，生命周期管理复杂） | — |
+| **生态成熟度（Windows）** | 高（kardianos/service、x/sys/windows 广泛使用） | 中（windows-rs 生态发展中） | — |
+| **mTLS/gRPC 支持** | ✅ 原生（grpc-go + crypto/tls） | ✅（tonic + rustls） | §3.1.2 |
+
+**选择 Go 的理由**：
+
+1. **与 EMX Server 技术栈一致**（PREFERENCE_11/PREFERENCE_12）：Server 为 Go，Agent 同 Go 可共享 protobuf 定义、gRPC stub、mTLS 配置，减少跨语言 FFI 复杂度。Remote Agent 与 Server 之间 gRPC 接口（§3.1.4）可直接复用 Server 端 protobuf。
+
+2. **Windows service 生态成熟**：`github.com/kardianos/service` 是成熟的跨平台 service 管理库，支持 Windows service 安装/启动/停止，生产级使用广泛。Rust 的 windows-service crate 相对较新。
+
+3. **开发效率与维护成本**：Go 编译快（< 10s），GC 减少心智负担，适合 V1 快速交付。Rust 编译慢（> 60s），生命周期管理复杂，开发效率低。
+
+4. **安全边界可接受**：Go 虽内存安全弱于 Rust，但 Remote Agent 的安全边界主要在：
+   - mTLS 通道加密（crypto/tls，成熟）；
+   - 沙箱权限校验（应用层逻辑，与语言无关）；
+   - Windows API 调用（syscall 边界，可控）。
+   Go 的 unsafe 边界仅限于 syscall 调用，可代码审查控制。Rust 的内存安全优势在 Agent 场景下非决定性因素。
+
+5. **产物体积可接受**：Go 静态链接产物 ~10~15 MB，对 Remote Agent（独立安装包）可接受。Rust 体积更小但非关键优势。
+
+6. **用户偏好对齐**：PREFERENCE_11/PREFERENCE_12 明确 Go 后端，Agent 选 Go 与用户偏好一致。
+
+**拒绝 Rust 的理由**：
+- 与 Server 技术栈不一致，需跨语言 FFI；
+- Windows service 生态较新；
+- 开发效率低，V1 交付周期风险高；
+- 内存安全优势在 Agent 场景下非决定性（安全边界在 mTLS + 沙箱，非内存安全）。
+
+### 4.6.3 Windows Integration Strategy
+
+Remote Agent 在 Windows 10/11 x64 上的系统集成方式：
+
+| 集成维度 | 实现方式 | 关联 spec |
+|---------|---------|----------|
+| **Input Injection（鼠标）** | 调用 `user32.dll` 的 `SendInput` API，注入 `INPUT_MOUSE` 结构（绝对坐标归一化 [0.0, 1.0] 映射到多显示器虚拟桌面坐标） | spec §7.5.2 规则 8 |
+| **Input Injection（键盘）** | 调用 `SendInput` API，注入 `INPUT_KEYBOARD` 结构（Windows virtual-key codes，支持 Ctrl/Alt/Shift/Win 组合） | spec §7.5.2 规则 4 |
+| **UAC 处理** | Agent 以普通用户权限运行，需提升的操作通过 `ShellExecuteEx` + `runas` verb 触发 UAC 提示，由用户确认。**Agent 不自动绕过 UAC**（关联 §4.6.4 权限边界） | §3.1.6 沙箱 |
+| **多显示器** | 调用 `EnumDisplayMonitors` API 枚举显示器，`GetMonitorInfo` 获取分辨率与位置，鼠标坐标按虚拟桌面坐标系映射 | spec §7.6 |
+| **Clipboard 读** | 调用 `OpenClipboard` + `GetClipboardData`（CF_TEXT/CF_UNICODETEXT），需 `ClipboardRead` 权限 | spec §7.5.2 规则 4 |
+| **Clipboard 写** | 调用 `OpenClipboard` + `SetClipboardData`，需 `ClipboardWrite` 权限 | spec §7.5.2 规则 4 |
+| **Process Launch** | 调用 `CreateProcess` API，仅允许白名单内应用（`remoteControl.appLaunchWhitelist`），需 `AppLaunch` 权限 | §3.1.6 沙箱 |
+| **File Transfer** | 标准 Go `os.Open`/`os.Create`，限制目标路径在白名单目录内（`remoteControl.fileTransferPathWhitelist`），需 `FileTransfer` 权限 | §3.1.6 沙箱 |
+| **Ctrl-Alt-Win 组合** | `SendInput` 注入 VK_LCONTROL + VK_LMENU + VK_LWIN + 目标键，需 `CtrlAltWin` 独立权限（默认 DENY） | spec §7.5.3 |
+| **系统级快捷键隔离** | Ctrl-Alt-Del 由 Windows 内核处理，程序不可模拟（天然隔离，§3.1.6） | §3.1.6 |
+
+### 4.6.4 Service / Process Model
+
+> **裁决**：Remote Agent 作为 **Windows Service** 运行（非 user process）。
+
+**选型理由**：
+
+| 维度 | Windows Service | User Process | 关联 spec |
+|------|----------------|-------------|----------|
+| **启动时机** | 系统启动时自动启动（无需用户登录） | 用户登录后启动 | spec §7.6 |
+| **生命周期** | 独立于用户会话，用户注销后仍运行 | 用户注销后退出 | spec §7.6"独立于浏览器" |
+| **权限** | 以 Service 账户运行（LocalService/NetworkService 或专用账户） | 以用户权限运行 | §4.6.5 |
+| **UAC** | Service 不触发 UAC（非交互式） | 可能触发 UAC | §3.1.6 |
+| **远程控制可用性** | 用户登录前 Agent 已就绪，可随时接受控制 | 用户未登录则 Agent 未运行 | spec §7.5.2 |
+
+**Service 配置**：
+
+| 配置项 | 值 | 关联 spec |
+|--------|-----|----------|
+| Service 名称 | `EMXRemoteAgent` | — |
+| 启动类型 | Automatic（系统启动时自动启动） | spec §7.6 |
+| 运行账户 | NT Authority\LocalService（最小权限，非 Administrator） | §4.6.5 |
+| 恢复策略 | 失败后自动重启（第 1/2/3 次失败均重启） | spec §6.2 规则 2 |
+| 依赖 | 无（不依赖其他 Service） | — |
+| 描述 | "EMX Remote Agent for remote control" | — |
+
+**与用户交互**：Service 以 LocalService 运行（非交互式），需与用户交互时（如授权对话框、ESC 终止提示）通过**独立 UI Helper Process**（用户会话内启动）实现：
+- Service 检测到控制请求 → 启动 UI Helper Process（用户会话）；
+- UI Helper Process 显示授权对话框 → 用户勾选权限 → 返回 Service；
+- UI Helper Process 在用户按 ESC 时通知 Service 终止控制；
+- UI Helper Process 在用户注销时退出，Service 保留。
+
+### 4.6.5 Privilege Boundary
+
+**Agent 权限边界**（关联 spec §6.3、§3.1.6 沙箱）：
+
+| 权限维度 | Agent 权限 | 防提权机制 | 关联 spec |
+|---------|-----------|-----------|----------|
+| **运行账户** | LocalService（非 Administrator） | Windows Service 配置，最小权限原则 | §3.1.6 |
+| **文件系统** | 仅白名单目录（`fileTransferPathWhitelist`） | 路径白名单校验 | §3.1.6 |
+| **进程启动** | 仅白名单应用（`appLaunchWhitelist`） | 应用白名单校验 | §3.1.6 |
+| **网络** | 仅主动出站 mTLS（不监听入站） | 防火墙策略 + Agent 不绑定端口 | §3.1.7 |
+| **注册表** | 仅读（HKLM\SOFTWARE\EMX 读取配置），不写 | Windows ACL | — |
+| **系统级操作** | Ctrl-Alt-Win 需独立权限（默认 DENY） | 权限集校验 | spec §7.5.3 |
+| **UAC 提升** | Agent 不自动绕过 UAC，需用户确认 | ShellExecuteEx + runas verb | §3.1.6 |
+| **其他进程通信** | 禁止（沙箱隔离） | 进程隔离 | §3.1.7 |
+
+**防提权保证**：
+1. Agent 以 LocalService 运行，无 Administrator 权限；
+2. 需提升的操作通过 UAC 提示用户确认，**Agent 不自动绕过 UAC**；
+3. Agent 不监听入站端口，外部无法直接连接 Agent；
+4. Agent 不与其他进程通信，沙箱隔离；
+5. Agent 证书 CN=agentId，不承载控制权，控制权由会议级授权决定（§3.1.11）。
+
+### 4.6.6 Code Signing
+
+**代码签名策略**（关联 spec §6.3、Windows SmartScreen 警告规避）：
+
+| 签名对象 | 签名方式 | 证书类型 | 关联 spec |
+|---------|---------|---------|----------|
+| Agent 可执行文件（emx-agent.exe） | Authenticode 签名（signtool.exe） | 企业代码签名证书（EV 或 OV） | spec §6.3 |
+| UI Helper Process（emx-agent-ui.exe） | Authenticode 签名 | 同上 | — |
+| Agent 安装包（emx-agent-setup.msi） | MSI 签名 | 同上 | — |
+| Agent 自动更新包（emx-agent-update.zip） | 签名 + SHA-256 校验和 | 同上 | §4.6.7 |
+
+**证书要求**：
+- **V1**：OV（Organization Validation）代码签名证书，避免 SmartScreen 警告（首次运行时仍有警告，但可信任）；
+- **P1/V2**：EV（Extended Validation）代码签名证书，立即信任无 SmartScreen 警告（成本更高）；
+- 证书由企业 PKI 签发或购买商业代码签名证书（如 DigiCert/Sectigo）；
+- 证书私钥由企业安全保管，签名在 CI/CD 构建时自动执行。
+
+**签名流程**：
+1. Go 交叉编译 `emx-agent.exe`（Windows amd64）；
+2. `signtool.exe sign /f cert.pfx /p password /t http://timestamp.digicert.com emx-agent.exe`；
+3. 验证签名：`signtool.exe verify /pa emx-agent.exe`；
+4. 打包 MSI 安装包 + 签名 MSI。
+
+### 4.6.7 Upgrade Strategy
+
+**自动升级机制**（关联 spec §7.6"独立升级管理"）：
+
+```plantuml
+@startuml
+title Remote Agent 自动升级流程
+
+participant "Agent\n(本机)" as A
+participant "EMX Server\n(Update API)" as S
+database "MinIO\n(更新包)" as MinIO
+participant "Audit" as Audit
+
+== 1. 版本检查（心跳时） ==
+A -> S : Heartbeat (currentVersion=v1.2.0)
+S -> S : 查询最新版本 (latestVersion=v1.3.0)
+alt currentVersion < latestVersion
+    S --> A : Heartbeat Response (updateAvailable=true, v1.3.0, sha256, downloadUrl)
+end
+
+== 2. 下载更新包（Agent 主动） ==
+A -> MinIO : GET emx-agent-update-v1.3.0.zip (mTLS)
+MinIO --> A : 更新包二进制
+A -> A : 校验 SHA-256 + Authenticode 签名
+alt 校验通过
+    A -> A : 解压到临时目录 (emx-agent-update.exe)
+else 校验失败
+    A -> A : 拒绝升级, 告警
+    stop
+end
+
+== 3. 安装升级（Service 重启） ==
+A -> A : 标记 pendingUpgrade, 通知 Server
+A -> A : 停止接受新控制通道（现有控制会话完成或终止）
+A -> A : 替换 emx-agent.exe（原子替换）
+A -> A : 重启 Service（Windows Service 恢复策略自动重启）
+A -> A : 启动后校验新版本签名 + 版本号
+A -> S : Heartbeat (currentVersion=v1.3.0, upgradeSuccess=true)
+S -> Audit : 审计 "Agent Upgraded" (agentId, v1.2.0 → v1.3.0)
+
+note right
+  升级保证:
+  - 更新包 SHA-256 + Authenticode 双重校验
+  - 原子替换 + Service 重启
+  - 现有控制会话优雅终止 (不中断会议)
+  - 升级事件审计
+  - 关联 spec §7.6 (独立升级管理)
+end note
+@enduml
+```
+
+**升级策略**：
+
+| 策略项 | 配置 | 关联 spec |
+|--------|------|----------|
+| 检查频率 | 每次心跳（5s）携带 currentVersion | §3.1.9 |
+| 下载方式 | Agent 主动从 MinIO 下载（mTLS），Server 不主动推送 | spec §6.3 |
+| 校验 | SHA-256 校验和 + Authenticode 签名双重 | §4.6.6 |
+| 安装时机 | 现有控制会话完成/终止后，避免中断 | spec §7.5.2 规则 5 |
+| 替换方式 | 原子替换（rename）+ Service 重启 | — |
+| 回滚 | 保留旧版本 emx-agent.exe.bak，新版本启动失败时自动回滚 | spec §6.2 规则 2 |
+| 强制升级 | 管理员可通过 Server API 标记"强制升级"，Agent 下次心跳时必须升级 | spec §7.6 |
+| 升级窗口 | 可配置升级时间窗（如凌晨 2~5 点），避免业务时段 | — |
+
+### 4.6.8 Remote Agent 技术栈汇总
+
+| 维度 | 选型 | 关联 spec |
+|------|------|----------|
+| **语言** | Go（关联 PREFERENCE_11/PREFERENCE_12） | — |
+| **构建** | Go cross-compile to windows/amd64 + `go build -ldflags "-s -w"` | — |
+| **gRPC** | grpc-go + protobuf（与 Server 共享 .proto） | §3.1.4 |
+| **mTLS** | crypto/tls + ECDSA P-256 证书 | §3.1.2 |
+| **Windows API** | golang.org/x/sys/windows + syscall（SendInput/EnumDisplayMonitors/Clipboard） | §4.6.3 |
+| **Service 管理** | github.com/kardianos/service | §4.6.4 |
+| **证书存储** | Windows DPAPI（crypto 加密存储） | §3.1.3 |
+| **代码签名** | Authenticode（signtool.exe + OV 证书，V1；EV 证书，P1） | §4.6.6 |
+| **自动升级** | 自实现（Heartbeat 版本检查 + mTLS 下载 + SHA-256 + 签名校验 + 原子替换 + Service 重启） | §4.6.7 |
+| **UI Helper** | 独立 Process（用户会话内），用于授权对话框与 ESC 提示 | §4.6.4 |
+| **产物体积** | ~10~15 MB（静态链接） | — |
+| **目标平台** | Windows 10/11 x64（V1），macOS（P1/V2） | spec §6.5 规则 4 |
+
+### 4.6.9 v0.3 §2.1.2 与 §3.1 的修正
+
+v0.3 §2.1.2 架构图中 "Agent Core (Go/Rust)" 与 §3.1 "Agent Core" 现统一为 **"Agent Core (Go)"**，本节（§4.6）为完整技术栈裁决，v0.3 相关位置无需文本修改，以本节裁决为准。
+
+> **AR-07 闭合声明**：v0.4 已明确 Remote Agent 语言选型为 **Go**（与 Server 技术栈一致、Windows service 生态成熟、开发效率高、安全边界可接受、对齐 PREFERENCE_11/12），并补充 Windows Integration Strategy（SendInput/UAC/多显示器/clipboard/process launch）、Service/Process Model（Windows Service + UI Helper Process）、Privilege Boundary（LocalService + 白名单 + 不绕过 UAC）、Code Signing（Authenticode + OV 证书 V1）、Upgrade Strategy（Heartbeat 检查 + mTLS 下载 + SHA-256 + 签名校验 + 原子替换 + Service 重启 + 回滚）。可追溯至 spec §7.6、§6.5 规则 4、§6.3。
+
+---
+
+> **第四章结束。EMX-002 架构设计文档 v0.4 DRAFT 已闭合 AR-02~AR-07 六项 Architecture Review Gap：AR-02 Security-Critical Audit Fail-Closed 策略（§4.1）；AR-03 Yjs Canonical Version Model 收敛（§4.2）；AR-04 Capacity Target vs Verified Boundary（§4.3）；AR-05 三层部署等级（§4.4）；AR-06 Screen Share → Remote Control 前置关系 ADR-001（§4.5）；AR-07 Remote Agent Go 选型 + Windows Boundary 收敛（§4.6）。AR-01（spec.md 状态元数据）由 CodeArts 直接处理，不在本章范围。本章仅做架构设计 Gap Closure，不拆 Coding Task、不进入 Implementation、不授权编码。**
 
