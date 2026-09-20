@@ -3,15 +3,20 @@
 > **项目：Enterprise Meeting X（EMX）**
 > **中文名称：企业实时会议与远程协作平台**
 > **文档编号：EMX-002**
-> **版本：v0.4 DRAFT**
+> **版本：v0.5 DRAFT**
 > **阶段：Architecture Design**
-> **状态：DRAFT / 待 Architecture Gate 二轮裁决（AR-02~AR-07 已闭合，AR-01 由 CodeArts 直接处理 spec.md 状态元数据）**
+> **状态：DRAFT / Final Gap Closure（AR-02 + AR-08 闭合；AR-03~AR-07 已闭合；AR-01 由 CodeArts 直接处理 spec.md 状态元数据）**
 > **实现方：华为云团队**
 > **部署目标：企业私有化 Debian Server**
-> **需求基线：EMX-001 v0.2 DRAFT（SHA256 = 62036788ec5b2fb5835a2f2fa9dadebcae949fb4b1768301f1b43cf25ec7960e）**
-> **当前裁决：不授权编码，待 Architecture Gate 二轮通过后进入 EMX-003 Task Decomposition**
+> **需求基线：EMX-001 v0.2（PASS / CLOSED / FROZEN）**
+> **Requirements Gate：FINAL ACCEPTANCE**
+> **RR-01~RR-04：CLOSED**
+> **D-01~D-03：EMX-002 Design Input**
+> **基线 SHA256：218C395DB80C7A7052A8200ACA6BE9AA6229D4251AA4C1DDDB5B4A23A5DF1309**
+> **当前裁决：不授权编码，待 Architecture Gate 二轮 Final Acceptance 后进入 EMX-003 Task Decomposition**
 > **文档定位：架构设计（How），不含逐行代码实现**
-> **本版变更：v0.3 → v0.4，依据 PM Architecture Review 一轮裁决 🟡 HOLD 闭合 AR-02~AR-07 六项 Gap：AR-02 Security-Critical Audit Fail-Closed 策略 + Transactional Outbox + Durable Queue + Audit Failure Policy 表格（§4.1）；AR-03 Yjs Canonical Version Model 裁决 + 10 项并发/重连/恢复/Undo 语义（§4.2）；AR-04 Capacity Target vs Verified Boundary 明确声明 + Task 阶段验证门（§4.3）；AR-05 三层部署等级 Tier 1/2/3（§4.4）；AR-06 Screen Share → Remote Control 前置关系 ADR-001（§4.5）；AR-07 Remote Agent 语言选型 Go + Windows Boundary 收敛（§4.6）**
+> **本版变更：v0.4 → v0.5，依据 PM Architecture Gate 二轮裁决进行 Final Gap Closure，仅处理 AR-02 + AR-08 两项：AR-02 统一全文 Audit Failure 语义（§2.1.3.6 / §2.2 / §3.4.3 / §3.4.7 / §3.6.8 / §3.7.15 全文修正为 Low-Risk 异步补写 + Security-Critical Fail-Closed 双模型，§3.6.8 Remote Control Approved 时序改为 GrantControl → Transactional Outbox → Audit Store Append → Hash-Chain Commit → Audit ACK → OpenControlChannel → 控制会话建立）；AR-08 Requirements Baseline Binding（顶部基线升级为 EMX-001 v0.2 PASS / CLOSED / FROZEN + 新 SHA256）**
+> **上版变更（v0.4）：v0.3 → v0.4，依据 PM Architecture Review 一轮裁决 🟡 HOLD 闭合 AR-02~AR-07 六项 Gap：AR-02 Security-Critical Audit Fail-Closed 策略 + Transactional Outbox + Durable Queue + Audit Failure Policy 表格（§4.1）；AR-03 Yjs Canonical Version Model 裁决 + 10 项并发/重连/恢复/Undo 语义（§4.2）；AR-04 Capacity Target vs Verified Boundary 明确声明 + Task 阶段验证门（§4.3）；AR-05 三层部署等级 Tier 1/2/3（§4.4）；AR-06 Screen Share → Remote Control 前置关系 ADR-001（§4.5）；AR-07 Remote Agent 语言选型 Go + Windows Boundary 收敛（§4.6）**
 > **上版变更（v0.3）：依据 PM Architecture Review 裁决深度完善 D-01~D-07 七项 Gate 项：D-01 补齐设备身份/重连/Agent 绑定 Target/身份分离/被盗失效机制；D-02 补齐版本号机制/操作回放；D-03 补齐 TURN 带宽/WebSocket 连接数/V1 容量瓶颈边界/目标 vs 验证区分；D-04 补齐故障三态矩阵；D-05 补齐多网络路径差异/Firewall 设计原则；D-06 补齐零安装 ≠ Remote Control 零安装架构区分；D-07 补齐七者权限矩阵/Screen Share 与 Remote Control 架构分离/14 类审计事件实现**
 
 ---
@@ -525,7 +530,8 @@ stop
 | Guest 入会批准 | 候机室移除 + 颁发 Guest Token + 加入参会者列表 | 强一致（PostgreSQL + Redis 双写） | Token 签发失败则回退候机室 | EMX-R003/R013 |
 | 远程控制建立 | 控制会话记录 + Remote Agent 通道建立 + 审计写入 | 最终一致（先持久化后建通道） | 通道建立失败则标记会话为"建立失败" | EMX-R016/R017 |
 | 录制停止 | 停止采集 + 触发合成 + 更新录制状态 | 最终一致（异步合成） | 合成失败保留分轨，支持重合成 | EMX-R014 spec §7.8.4 |
-| 审计写入 | append 事件 + 哈希链更新 | 强一致（单行 append） | 写入失败异步补写 + 运维告警 | EMX-R015 spec §7.10.4 |
+| 审计写入（Low-Risk 事件） | append 事件 + 哈希链更新 | 强一致（单行 append） | 写入失败 → Durable Queue 异步补写 + 运维告警，业务可继续 | EMX-R015 spec §7.10.4 |
+| 审计写入（Security-Critical 事件） | 业务状态 + outbox 同事务原子提交 + Audit Store append + 哈希链 commit + Audit ACK | 强一致（Transactional Outbox） | Outbox / Durable Queue / Audit Store / Hash Chain / Audit ACK 任一失败 → **Fail-Closed，对应安全业务效果不得发生**（如 Remote Control Approved 失败 → MUST NOT establish Control Session） | EMX-R015 spec §6.3 规则 6、§7.5.2 规则 9、§4.1 |
 | 白板对象合并 | CRDT 本地合并 + 广播 + 异步持久化 | 最终一致（CRDT 保证收敛） | 无需补偿，CRDT 幂等 | EMX-R010 |
 | 主持人移交 | 原主持人失去控制权 + 新主持人获得控制权 + 广播 | 强一致（PostgreSQL 唯一约束 + Redis 原子操作） | 并发移交仅一位成功 | EMX-R012 spec §7.1.1 规则 5 |
 
@@ -914,10 +920,15 @@ type AuditEvent struct {
 }
 ```
 
-- **业务说明**：append-only 审计事件写入，SHA-256 哈希链保证不可篡改（关联 EMX-R015、spec §7.10.2）。
+- **业务说明**：append-only 审计事件写入，SHA-256 哈希链保证不可篡改（关联 EMX-R015、spec §7.10.2）。**事件分级**：Low-Risk 事件（UI/状态类）走 Durable Queue 异步补写；Security-Critical 事件（Remote Control Requested/Approved/Rejected/Terminated、Guest Approved、Participant Removed、权限/策略变更）走 Transactional Outbox + Fail-Closed，对应安全业务效果在 Audit ACK 前不得发生（详见 §4.1）。
 - **前置条件**：调用方为内部服务；EventType ∈ spec §7.10.1 清单。
 - **后置条件**：事件 append 至 PostgreSQL；哈希链更新；不可修改/删除。
-- **异常映射**：审计存储不可达 → 业务不阻塞，异步补写 + 运维告警（spec §7.10.4 异常 1）。
+- **异常映射**（分级处理，关联 §4.1 Audit Failure Policy 表格）：
+
+| 事件风险等级 | 审计存储不可达时业务行为 | 关联 spec |
+|------------|------------------------|----------|
+| **Low-Risk**（Meeting Created / Guest Invited / Guest Joined 候机室 / Screen Share Started/Stopped / Recording Started/Stopped / Meeting Ended） | 业务可继续 + Durable Queue 异步补写 + 运维告警 | spec §7.10.4 异常 1 |
+| **Security-Critical**（Remote Control Requested/Approved/Rejected/Terminated、Guest Approved、Participant Removed、权限/策略变更） | **Fail-Closed**：对应安全业务效果**不得发生**（如 Remote Control Approved → MUST NOT establish Control Session） + 返回 `EMX-E-AUDIT-002~006` + 运维告警 | spec §6.3 规则 6、§7.5.2 规则 9 |
 
 ## 2.3 数据模型
 
@@ -2667,7 +2678,8 @@ stop
 | Nginx Gateway 故障 | 全站访问 | Keepalived VIP 切换（≤1s） | 备节点接管 | spec §6.2 规则 1 |
 | 业务服务实例故障 | 该实例上会议 | LB 移除实例；客户端重连至健康实例 | 实例恢复或新实例启动 | spec §6.2 规则 5 |
 | Remote Agent 通道中断 | 远程控制会话 | 立即终止控制会话，被控方恢复控制权 | 需重新申请授权 | spec §7.5.5 异常 4 |
-| 审计写入失败 | 审计记录 | 业务不阻塞，异步补写 + 运维告警 | 存储恢复后补写 | spec §7.10.4 异常 1 |
+| 审计写入失败（Low-Risk 事件） | 审计记录 | 业务可继续，Durable Queue 异步补写 + 运维告警 | 存储恢复后补写 | spec §7.10.4 异常 1 |
+| 审计写入失败（Security-Critical 事件） | 审计记录 + 对应安全业务效果 | **Fail-Closed**：对应安全业务效果**不得发生**（如 Remote Control Approved 失败 → MUST NOT establish Control Session；Guest Approved 失败 → MUST NOT 签发 Guest Token；Participant Removed 失败 → MUST NOT 执行移除；权限/策略变更失败 → MUST NOT 生效） + 运维告警 | Audit Store 恢复后重新发起业务操作 | spec §6.3 规则 6、§7.5.2 规则 9、§4.1 |
 
 ### 3.4.4 熔断与限流
 
@@ -2679,7 +2691,8 @@ stop
 | SFU Room 创建 | 系统级并发会议数限制 | 由容量模型决定（§3.3） | spec §6.1 指标 8 |
 | Remote Agent 注册 | 一次性注册码 + 机器指纹去重 | 注册码单次有效 | spec §6.3 |
 | 远程控制会话 | 单被控方单会话 + maxDuration 上限 | 30min（策略可配） | spec §7.5.2 规则 7/11 |
-| 审计写入 | 异步队列 + 背压 | 队列满则告警不阻塞业务 | spec §7.10.4 |
+| 审计写入（Low-Risk） | 异步队列 + 背压 | 队列满则告警，业务可继续 | spec §7.10.4 |
+| 审计写入（Security-Critical） | Transactional Outbox + Fail-Closed | Outbox/Audit Store/Hash Chain/ACK 任一失败 → 对应安全业务效果不得发生 | spec §6.3 规则 6、§7.5.2 规则 9、§4.1 |
 | PostgreSQL 连接 | 连接池 + 最大连接数 | 100 连接/实例 | 防止连接耗尽 |
 | Redis 连接 | 连接池 + 最大连接数 | 200 连接/实例 | — |
 
@@ -2820,7 +2833,7 @@ PM Gate 要求明确每种故障的**可恢复性**、**会议是否中断**、*
 | **Gateway 单节点故障** | ✅ 可恢复 | ❌ 不中断 | ❌ 不丢失 | Keepalived VIP 切换至备节点 | 全站 ≤ 1s 不可访问 | 无 | ≤ 1s | 0 | spec §6.2 规则 1 |
 | **Gateway 全部故障** | ⚠️ 需人工 | ✅ 全部中断 | ❌ 不丢失 | 重启 Gateway | 全站不可访问 | 无 | 人工 | 0 | spec §6.2 规则 1 |
 | **PostgreSQL 主库故障** | ✅ 可恢复 | ❌ 不中断 | ❌ 不丢失 | 流复制 + 自动故障转移 | 会议进行中状态由 Redis 维持，不中断 | 无（同步流复制） | ≤ 5s | 0 | spec §6.2 规则 4 |
-| **PostgreSQL 全部故障** | ⚠️ 需人工 | ⚠️ 部分中断 | ⚠️ 审计延迟 | 从备份恢复 | 写操作暂缓，会议进行中由 Redis 维持 | 审计异步补写，可能延迟 | 人工 | ≤ 1h | spec §7.10.4 |
+| **PostgreSQL 全部故障** | ⚠️ 需人工 | ⚠️ 部分中断 | ⚠️ 审计延迟 / 安全操作被拒 | 从备份恢复 | 写操作暂缓，会议进行中由 Redis 维持 | Low-Risk 审计异步补写；Security-Critical 审计 Fail-Closed（对应安全业务效果不得发生） | 人工 | ≤ 1h | spec §7.10.4、§4.1 |
 | **Redis 主节点故障** | ✅ 可恢复 | ⚠️ 短暂降级 | ⚠️ ≤ 1s 状态 | Sentinel 自动故障转移 | 候机室操作暂缓 ≤ 3s，已在会参会者不受影响 | 异步复制可能丢 ≤ 1s 实时状态（可重建） | ≤ 3s | ≤ 1s | spec §6.2 规则 4 |
 | **Redis 全部故障** | ⚠️ 需人工 | ⚠️ 部分中断 | ⚠️ 实时状态 | 从 RDB 快照恢复 | 实时状态丢失，会议状态由 PostgreSQL 重建 | 实时状态（候机室/在线状态）可重建 | 人工 | 实时状态 | — |
 | **MinIO 单节点故障** | ✅ 可恢复 | ❌ 不中断 | ❌ 不丢失 | 纠删码容忍单节点故障 | 无 | 无 | 即时 | 0 | spec §7.8.4 |
@@ -2832,7 +2845,8 @@ PM Gate 要求明确每种故障的**可恢复性**、**会议是否中断**、*
 | **网络抖动（非中断）** | ✅ 自动 | ❌ 不中断 | ❌ 不丢失 | 媒体自适应降级 + 重连 | 媒体质量下降，会议继续 | 无 | 即时 | 0 | spec §6.2 规则 2 |
 | **单参会者异常退出** | ✅ 可恢复 | ❌ 不中断 | ❌ 不丢失 | 该参会者标记断线 | 仅该参会者退出，其他不受影响 | 无 | 即时 | 0 | spec §6.2 规则 5 |
 | **主持人异常断线** | ✅ 可恢复 | ❌ 不中断 | ❌ 不丢失 | 会议进入"待重连"状态，超时后系统回收 | 会议保持 ≤ 5min（reconnectWindow） | 无 | ≤ 5min | 0 | spec §6.2 规则 6 |
-| **审计写入失败** | ✅ 可恢复 | ❌ 不中断 | ⚠️ 审计延迟 | 异步补写 + 运维告警 | 无 | 审计延迟，存储恢复后补写 | 异步 | 0（补写） | spec §7.10.4 |
+| **审计写入失败（Low-Risk 事件）** | ✅ 可恢复 | ❌ 不中断 | ⚠️ 审计延迟 | Durable Queue 异步补写 + 运维告警 | 无 | 审计延迟，存储恢复后补写 | 异步 | 0（补写） | spec §7.10.4 |
+| **审计写入失败（Security-Critical 事件）** | ✅ 可恢复 | ⚠️ 对应业务效果不发生 | ❌ 不丢失（Fail-Closed） | **Fail-Closed**：对应安全业务效果**不得发生**（Remote Control Approved → MUST NOT establish Control Session；Guest Approved → MUST NOT 签发 Token；Participant Removed → MUST NOT 执行移除；权限/策略变更 → MUST NOT 生效） + 运维告警 | 仅对应安全操作被拒，会议其他流程不中断 | 无（操作未发生，无审计缺失） | 同步拒绝 | 0 | spec §6.3 规则 6、§7.5.2 规则 9、§4.1 |
 | **Internal CA 故障** | ✅ 可恢复 | ❌ 不中断 | ❌ 不丢失 | CA 重启 | Agent 证书续签暂缓（24h 有效期内可容忍） | 无 | ≤ 24h | 0 | §3.1.2 |
 | **整机房故障** | ❌ V1 不支持 | ✅ 全部中断 | ⚠️ 取决于备份 | 需灾备（V1 不要求） | 全部服务中断 | 取决于备份恢复 | — | — | spec §12.2 |
 
@@ -2843,7 +2857,7 @@ PM Gate 要求明确每种故障的**可恢复性**、**会议是否中断**、*
 | **V1 无单点故障导致全站不可恢复** | 所有单点均有主备/集群/降级策略 | spec §6.2 规则 1 |
 | **会议级!全局级故障隔离** | 单 SFU 节点/单业务实例故障仅影响其上会议，非全部 | spec §6.2 规则 5 |
 | **媒体可中断但状态不丢** | SFU 故障导致媒体中断，但会议状态（Redis/PG）不丢，重连后恢复 | spec §6.2 规则 2/4 |
-| **审计不丢失（最终一致）** | 审计写入失败时异步补写，不阻塞业务，最终一致 | spec §7.10.4 |
+| **审计分级处理（Low-Risk + Security-Critical）** | Low-Risk 事件审计失败 → Durable Queue 异步补写，业务可继续；Security-Critical 事件审计失败 → **Fail-Closed**，对应安全业务效果不得发生（详见 §4.1 Audit Failure Policy） | spec §7.10.4、§6.3 规则 6、§7.5.2 规则 9 |
 | **录制断线续录** | 录制中断不产生不可恢复丢失，重连后续录 | spec §6.2 规则 3 |
 | **远程控制故障安全失效** | Agent 断线/证书吊销 → 控制会话立即终止，被控方恢复控制权（安全失效） | spec §7.5.2 规则 5 |
 | **V1 不要求整机房灾备** | 整机房故障需灾备，V1 不做全球多区域灾备（spec §12.2） | spec §12.2 |
@@ -3760,13 +3774,27 @@ S -> T : 弹出授权对话框 (权限勾选)
 T -> S : GrantControl (grantedPermissions)
 S -> S : 查询: target 是否有已注册且在线的 Remote Agent
 alt Remote Agent 已安装且在线
+    S -> S : Business Authorization (权限集校验 + 会话状态机校验)
+    S -> S : Transactional Outbox (业务状态 + outbox 同事务原子提交)
+    S -> S : Audit Store Append (Remote Control Approved 事件)
+    S -> S : Hash-Chain Commit (SHA-256 哈希链更新)
+    S -> S : Audit ACK (审计可靠落盘确认)
+    note right
+      关联 §4.1 AR-02 Fail-Closed 策略:
+      顺序: GrantControl → Business Authorization
+      → Transactional Outbox → Durable → Audit Store Append
+      → Hash-Chain Commit → Audit ACK
+      → OpenControlChannel → 控制会话建立
+      任意失败 (Outbox / Durable Queue / Audit Store /
+      Hash Chain / Audit ACK) → MUST NOT establish
+      Remote Control Session
+    end note
     S -> RA : OpenControlChannel (mTLS, grantedPermissions)
     RA -> RA : 沙箱校验: grantedPermissions ⊆ Agent 能力
     RA --> S : 通道就绪
-    S -> A : 审计 "Remote Control Approved" + 权限项
-    S --> C : 控制会话建立
+    S --> C : 控制会话建立 (sessionId, maxDuration 计时启动)
 else Remote Agent 未安装
-    S -> A : 审计 "Remote Control Rejected (Agent 未安装)"
+    S -> S : Audit "Remote Control Rejected (Agent 未安装)" (Low-Risk 异步补写)
     S --> T : 提示"需安装 EMX Remote Agent"
     S --> C : 提示"被控方需安装并运行 EMX Remote Agent"
     note right
@@ -3776,9 +3804,18 @@ else Remote Agent 未安装
       Remote Agent 未安装时申请远程控制 → 拒绝并提示安装
     end note
 else Remote Agent 已安装但离线
-    S -> A : 审计 "Remote Control Rejected (Agent 离线)"
+    S -> S : Audit "Remote Control Rejected (Agent 离线)" (Low-Risk 异步补写)
     S --> T : 提示"请启动 EMX Remote Agent"
     S --> C : 提示"被控方 Remote Agent 未运行"
+else Audit Store 不可达 (Fail-Closed)
+    S -> S : 拒绝建立控制会话 (Fail-Closed)
+    S --> T : "系统错误，请重试" (EMX-E-AUDIT-003)
+    S --> C : "系统错误，请重试" (EMX-E-AUDIT-003)
+    note right
+      关联 §4.1.9 Audit Store 不可用时行为:
+      Approved 事件审计不可写 → MUST NOT establish
+      Remote Control Session + 返回 EMX-E-AUDIT-003 + 告警
+    end note
 end
 
 == 5. 控制阶段 (Agent 承担本机操作) ==
@@ -3793,8 +3830,14 @@ end
 == 6. 终止 (被控方一键终止) ==
 T -> RA : 按 ESC (本机 Agent 捕获)
 RA -> S : TerminateSignal (ESC)
-S -> RA : 立即断开通道
-S -> A : 审计 "Remote Control Terminated" (reason=ESC)
+S -> RA : 立即断开通道 (安全优先, 被控方立即恢复控制权)
+S -> S : Transactional Outbox + Audit Store Append "Remote Control Terminated" (reason=ESC)
+note right
+  关联 §4.1.3 Remote Control Terminated 特殊处理:
+  - 通道立即断开 (安全优先, 不等 Audit ACK)
+  - 终止事件进入 durable queue 重试直至落盘成功
+  - 不得出现"控制已终止但无审计证据"
+end note
 S --> C : 控制已终止
 @enduml
 ```
@@ -4618,7 +4661,10 @@ note bottom
   - append-only: 不可修改/删除
   - 哈希链: SHA-256, 任何篡改可检测
   - 保留期 ≥ 365 天
-  - 异步写入: 业务不阻塞, 写入失败异步补写
+  - 分级写入 (§4.1 Audit Failure Policy):
+    * Low-Risk 事件: Durable Queue 异步补写, 业务可继续
+    * Security-Critical 事件: Transactional Outbox + Fail-Closed,
+      对应安全业务效果在 Audit ACK 前不得发生
   - Payload 脱敏: 密码/Token 仅含哈希或前缀
 end note
 @enduml
@@ -4644,45 +4690,65 @@ end note
 | `currHash` | `SHA-256(prevHash ‖ eventId ‖ eventType ‖ actorId ‖ occurredAt ‖ payload)` | spec §6.3 规则 6 |
 | `immutable` | 恒为 `true`，不可修改/删除 | spec §11.7 |
 
-**审计写入失败处理**（关联 spec §7.10.4 异常 1）：
+**审计写入失败处理**（关联 spec §7.10.4 异常 1、§4.1 Audit Failure Policy）：
 
 ```plantuml
 @startuml
-title 审计写入失败处理流程
+title 审计写入失败分级处理流程
 
 participant "业务服务" as Biz
 participant "AuditService" as Audit
-participant "PostgreSQL" as PG
-participant "异步补写队列" as Queue
+participant "PostgreSQL\n(audit_events)" as PG
+participant "Durable Queue\n(outbox 表)" as Queue
 participant "告警" as Alert
 
-Biz -> Audit : AppendEvent (event)
+Biz -> Audit : AppendEvent (event, riskLevel)
 Audit -> PG : INSERT event
+
 alt 写入成功
     PG --> Audit : OK
     Audit --> Biz : Ack
-else 写入失败 (PG 不可达)
+
+else 写入失败 (PG 不可达) + Low-Risk 事件
     PG --> Audit : Error
-    Audit -> Queue : 入队异步补写 (event)
-    Audit -> Alert : 告警 "审计写入失败"
-    Audit --> Biz : Ack (业务不阻塞)
+    Audit -> Queue : 入队异步补写 (event, status=PENDING)
+    Audit -> Alert : 告警 "Low-Risk 审计写入失败"
+    Audit --> Biz : Ack (业务可继续)
     note right
-      关联 spec §7.10.4 异常 1:
-      - 业务事件不阻塞
-      - 审计异步补写
-      - 运维告警
+      Low-Risk 事件 (§4.1.2):
+      Meeting Created / Guest Invited / Guest Joined 候机室 /
+      Screen Share Started/Stopped / Recording Started/Stopped /
+      Meeting Ended
+      策略: Durable Queue 异步补写 + 运维告警
+      关联 spec §7.10.4 异常 1
+    end note
+
+else 写入失败 (PG 不可达) + Security-Critical 事件
+    PG --> Audit : Error
+    Audit -> Alert : 告警 "Security-Critical 审计写入失败, Fail-Closed"
+    Audit --> Biz : **Reject (Fail-Closed, 对应安全业务效果不得发生)**
+    note right
+      Security-Critical 事件 (§4.1.2):
+      Remote Control Requested/Approved/Rejected/Terminated /
+      Guest Approved / Participant Removed / 权限策略变更
+      策略: Fail-Closed
+      - Remote Control Approved → MUST NOT establish Control Session
+      - Guest Approved → MUST NOT 签发 Guest Token
+      - Participant Removed → MUST NOT 执行移除
+      - 权限/策略变更 → MUST NOT 生效
+      关联 spec §6.3 规则 6, §7.5.2 规则 9
     end note
 end
 
-== 异步补写 ==
+== 异步补写 (仅 Low-Risk) ==
 loop PG 恢复后
-    Queue -> Audit : 重试写入
+    Queue -> Audit : 重试写入 (按 created_at 顺序)
     Audit -> PG : INSERT event
     alt 成功
         PG --> Audit : OK
-        Audit -> Queue : 出队
+        Audit -> Queue : 出队 (status=DONE)
     else 失败
-        Audit -> Queue : 保留, 继续重试
+        Audit -> Queue : 保留, 继续重试 (指数退避)
     end
 end
 @enduml
@@ -4995,7 +5061,7 @@ end note
 | `EMX-E-AUDIT-005` | 审计不可写，参会者移除拒绝 | 503 | `Participant Removed` |
 | `EMX-E-AUDIT-006` | 审计不可写，策略变更拒绝 | 503 | 权限/策略变更 |
 
-> **AR-02 闭合声明**：v0.4 已补充 Audit Event 分级、Security-Critical Fail-Closed 策略、Transactional Outbox、Durable Queue、重启恢复、去重、顺序保证、哈希链并发一致性、Audit Store 不可用时 Remote Control 行为、Queue 数据主权与加密、完整 Audit Failure Policy 表格。可追溯至 spec §6.3 规则 6、§7.5.2 规则 9、§7.10.1/§7.10.4。
+> **AR-02 闭合声明**：v0.4 已补充 Audit Event 分级、Security-Critical Fail-Closed 策略、Transactional Outbox、Durable Queue、重启恢复、去重、顺序保证、哈希链并发一致性、Audit Store 不可用时 Remote Control 行为、Queue 数据主权与加密、完整 Audit Failure Policy 表格。v0.5 Final Gap Closure 进一步统一全文 Audit Failure 语义：§2.1.3.6 事务边界、§2.2 AuditService 接口、§3.4.3 故障边界、§3.4.4 熔断限流、§3.4.7 故障三态矩阵、§3.6.8 Remote Control 时序图、§3.7.15 审计实现全部修正为 Low-Risk 异步补写 + Security-Critical Fail-Closed 双模型；§3.6.8 Remote Control Approved 时序严格改为 GrantControl → Transactional Outbox → Durable → Audit Store Append → Hash-Chain Commit → Audit ACK → OpenControlChannel → 控制会话建立，任意失败 MUST NOT establish Remote Control Session；禁止无条件的"audit failure → business not blocked → async retry"，Security-Critical 事件明确排除在该规则之外。可追溯至 spec §6.3 规则 6、§7.5.2 规则 9、§7.10.1/§7.10.4。
 
 ## 4.2 AR-03 — Yjs Canonical Version Model 收敛
 
@@ -5778,5 +5844,5 @@ v0.3 §2.1.2 架构图中 "Agent Core (Go/Rust)" 与 §3.1 "Agent Core" 现统�
 
 ---
 
-> **第四章结束。EMX-002 架构设计文档 v0.4 DRAFT 已闭合 AR-02~AR-07 六项 Architecture Review Gap：AR-02 Security-Critical Audit Fail-Closed 策略（§4.1）；AR-03 Yjs Canonical Version Model 收敛（§4.2）；AR-04 Capacity Target vs Verified Boundary（§4.3）；AR-05 三层部署等级（§4.4）；AR-06 Screen Share → Remote Control 前置关系 ADR-001（§4.5）；AR-07 Remote Agent Go 选型 + Windows Boundary 收敛（§4.6）。AR-01（spec.md 状态元数据）由 CodeArts 直接处理，不在本章范围。本章仅做架构设计 Gap Closure，不拆 Coding Task、不进入 Implementation、不授权编码。**
+> **第四章结束。EMX-002 架构设计文档 v0.5 DRAFT 已完成 Final Gap Closure：v0.4 闭合 AR-02~AR-07 六项 Architecture Review Gap（AR-02 Security-Critical Audit Fail-Closed 策略 §4.1；AR-03 Yjs Canonical Version Model 收敛 §4.2；AR-04 Capacity Target vs Verified Boundary §4.3；AR-05 三层部署等级 §4.4；AR-06 Screen Share → Remote Control 前置关系 ADR-001 §4.5；AR-07 Remote Agent Go 选型 + Windows Boundary 收敛 §4.6）；v0.5 Final Gap Closure 闭合 AR-02 全文审计语义统一（§2.1.3.6 / §2.2 / §3.4.3 / §3.4.4 / §3.4.7 / §3.6.8 / §3.7.15 全文修正为 Low-Risk 异步补写 + Security-Critical Fail-Closed 双模型，§3.6.8 Remote Control Approved 时序改为 GrantControl → Transactional Outbox → Audit Store Append → Hash-Chain Commit → Audit ACK → OpenControlChannel → 控制会话建立）+ AR-08 Requirements Baseline Binding（顶部基线升级为 EMX-001 v0.2 PASS / CLOSED / FROZEN + 新 SHA256）。AR-01（spec.md 状态元数据）由 CodeArts 直接处理，不在本章范围。本章仅做架构设计 Gap Closure，不拆 Coding Task、不进入 Implementation、不授权编码。**
 
